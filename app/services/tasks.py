@@ -13,8 +13,12 @@ from app.services.judge import (
     slice_transcript_by_datajson,
     judge_slides_batched,
     generate_feedback_and_questions,
+    judge_script_vs_speech,
+    review_script_quality,
 )
 from app.services.pptx_render import render_pptx_to_images
+from app.services.doc_parser import parse_word_script
+from app.services.speech_quality import compute_speech_quality
 
 
 @dataclass
@@ -106,6 +110,17 @@ def _pipeline(session_id: str, task_id: str) -> None:
 
         _set(task_id, stage="judge", progress_pct=60)
         per_slide_text = slice_transcript_by_datajson(transcript, data)
+        # Compute durations per slide from data.json if provided
+        durations_ms_by_index: Dict[int, int] = {}
+        for sl in data.get("slides", []) or []:
+            try:
+                idx = int(sl.get("index"))
+                start_ms = int(sl.get("start_ms")) if sl.get("start_ms") is not None else None
+                end_ms = int(sl.get("end_ms")) if sl.get("end_ms") is not None else None
+                if start_ms is not None and end_ms is not None and end_ms >= start_ms:
+                    durations_ms_by_index[idx] = end_ms - start_ms
+            except Exception:
+                continue
         image_map = {i + 1: p for i, p in enumerate(image_paths)} if image_paths else None
         per_slide_results = judge_slides_batched(slides_content, per_slide_text, batch_size=3, image_path_by_index=image_map)
         # Attach ASR transcript slice per slide to results
@@ -116,6 +131,8 @@ def _pipeline(session_id: str, task_id: str) -> None:
                 idx = None
             if idx is not None and idx in per_slide_text:
                 r["transcript"] = per_slide_text[idx]
+            if idx is not None and idx in durations_ms_by_index:
+                r["duration_ms"] = durations_ms_by_index[idx]
 
         sims = []
         for r in per_slide_results:
@@ -131,9 +148,25 @@ def _pipeline(session_id: str, task_id: str) -> None:
         weak_slides = sorted(list({*weak_by_density, *weak_by_fonts, *weak_by_similarity}))
 
         improvements, questions = generate_feedback_and_questions(weak_slides, deck_metrics, per_slide_results)
+
+        # Optional: compare uploaded script (Word) to transcript and review script quality
+        script_candidates = [folder / "word.docx", folder / "word.docm", folder / "script.docx", folder / "script.docm", folder / "word.doc"]
+        script_path = next((p for p in script_candidates if p.exists()), None)
+        script_eval = None
+        script_quality = None
+        if script_path is not None:
+            parsed = parse_word_script(script_path)
+            script_text = parsed.get("text", "")
+            if script_text:
+                script_eval = judge_script_vs_speech(script_text, transcript)
+                script_quality = review_script_quality(script_text)
         overall_score = round(similarity_avg * 100.0, 1)
 
-        _set(task_id, stage="assemble", progress_pct=85)
+        # Speech quality metrics
+        _set(task_id, stage="speech_quality", progress_pct=92)
+        speech_quality = compute_speech_quality(audio_path, transcript, data, per_slide_text)
+
+        _set(task_id, stage="assemble", progress_pct=95)
         report: Dict[str, Any] = {
             "uuid": session_id,
             "models": {"stt": "whisper-1", "judge": "gpt-4o-mini"},
@@ -142,6 +175,12 @@ def _pipeline(session_id: str, task_id: str) -> None:
             "slides": {"per_slide": per_slide_results},
             "presentation_quality": deck_metrics,
             "questions": questions,
+            "script": {
+                "present": script_path is not None,
+                "eval": script_eval,
+                "quality": script_quality,
+            },
+            "speech_quality": speech_quality,
         }
         (out_dir / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
         (out_dir / "feedback.md").write_text("\n".join(f"- {imp}" for imp in improvements), encoding="utf-8")

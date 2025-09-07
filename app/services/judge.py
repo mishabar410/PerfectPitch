@@ -160,3 +160,58 @@ def generate_feedback_and_questions(
         "product": _wrap_questions(qs.get("product", [])[:5]),
     }
     return improvements[:8], questions_struct
+
+
+def judge_script_vs_speech(script_text: str, transcript_text: str) -> Dict[str, Any]:
+    """Compare provided script (Word text) against spoken transcript.
+
+    Returns JSON with similarity, omissions, additions, and brief notes.
+    """
+    system = (
+        "You are a rigorous reviewer. Output strictly valid JSON. "
+        "Compare intended script to spoken transcript and assess alignment."
+    )
+    user = (
+        "[SCRIPT]\n" + script_text +
+        "\n[TRANSCRIPT]\n" + transcript_text +
+        "\n[INSTRUCTIONS]\nReturn JSON: {\"similarity_0_1\": float, \"notes\": str, \"missing_points\": [str], \"added_points\": [str]}"
+    )
+    resp = client.chat.completions.create(
+        model="gpt-4o-mini",
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        temperature=0,
+    )
+    txt = (resp.choices[0].message.content or "").strip()
+    try:
+        return json.loads(txt)
+    except Exception:
+        return {"similarity_0_1": 0.0, "notes": "", "missing_points": [], "added_points": []}
+
+
+def review_script_quality(script_text: str) -> Dict[str, Any]:
+    """Assess the quality of the provided script (clarity, structure, errors)."""
+    system = (
+        "You are a senior editor for public speaking scripts. Output strictly valid JSON."
+    )
+    user = (
+        "[SCRIPT]\n" + script_text +
+        "\n[INSTRUCTIONS]\nReturn JSON: {\"issues\":[str], \"suggestions\":[str], \"overall\": str}"
+    )
+    resp = client.chat.completions.create(
+        model="gpt-4o-mini",
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        temperature=0,
+    )
+    txt = (resp.choices[0].message.content or "").strip()
+    try:
+        return json.loads(txt)
+    except Exception:
+        return {"issues": [], "suggestions": [], "overall": ""}

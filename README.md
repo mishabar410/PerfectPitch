@@ -1,11 +1,12 @@
 # PerfectPitch MVP API
 
-Minimal pipeline to analyze a pitch presentation using PPTX and audio transcript (OpenAI Whisper) and produce a JSON report, feedback, and questions.
+Minimal pipeline to analyze a pitch presentation using PPTX and audio transcript (OpenAI Whisper) and produce a JSON report, feedback, questions, and speech-quality metrics.
 
 ## Stack
 - FastAPI, Uvicorn
-- OpenAI API: whisper-1 for transcription, gpt-4o-mini for judging
-- python-pptx for parsing slides
+- OpenAI API: whisper-1 (ASR), gpt-4o-mini (judging, feedback)
+- python-pptx (parsing), LibreOffice+poppler+pdf2image (slide PNGs)
+- librosa+ffmpeg (speech quality)
 
 ## Setup
 
@@ -27,7 +28,7 @@ export OPENAI_API_KEY=sk-...
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-Artifacts are served under `/artifacts/*`.
+Artifacts are served under `/artifacts/*`. Static UI at `/ui/`.
 
 ## Folder layout
 ```
@@ -37,6 +38,7 @@ uploads/
     meta.json
     pptx.pptm or .pptx
     video.mp4 or audio.*
+    word.docx|script.docx (optional)
 artifacts/
   {uuid}/report.json
   {uuid}/feedback.md
@@ -44,13 +46,22 @@ artifacts/
 ```
 
 ## API
-- POST `/process/{uuid}` → runs pipeline, writes artifacts and returns their paths.
-- GET `/artifacts/{uuid}/report.json` → retrieve report.
-- GET `/health` → health check.
+- POST `/sessions` → create upload session (UI does this automatically on load).
+- POST `/uploads/{uuid}` → upload files (pptx, meta.json, data.json, word.docx).
+- POST `/audio/{uuid}/chunk` + `/audio/{uuid}/finalize` → stream mic recording.
+- POST `/process/{uuid}` → run analysis in background.
+- GET `/status/{task_id}` → task progress.
+- GET `/artifacts/{uuid}/report.json|feedback.md|questions.json` → results.
 
 ## Notes
-- Transcript slicing is heuristic in MVP (full transcript per slide). You can upgrade by enabling segment timestamps and mapping to data.json windows.
-- PPTX metrics include text density, min font size, contrast heuristic, style consistency. No CV required.
+- UI: upload PPTX, it auto-renders PNG previews; navigate slides while recording. Timeline is saved to `data.json` automatically on stop.
+- Transcript slicing uses `data.json` slide timings when present, otherwise heuristic.
+- Report includes:
+  - `slides.per_slide[]`: similarity, judgement, evidence, transcript, duration_ms
+  - `presentation_quality`: density/small_fonts/contrast/style
+  - `questions` and `feedback`
+  - `script`: presence + eval of script vs speech + script quality (if Word uploaded)
+  - `speech_quality`: overall WPM/pauses/fillers/pitch and per-slide details
 
 ## Modules (overview)
 - `app/main.py`: FastAPI app, mounts `/artifacts`, `/ui`, includes routers.
@@ -58,7 +69,9 @@ artifacts/
 - `app/services/pptx_parser.py`: parse PPTX texts and compute presentation metrics.
 - `app/services/pptx_render.py`: render PPTX to PNG (LibreOffice/poppler).
 - `app/services/transcription.py`: Whisper transcription helper.
-- `app/services/judge.py`: LLM judging (multimodal image+text) and feedback.
+- `app/services/judge.py`: LLM judging (multimodal image+text), feedback, script checks.
 - `app/services/tasks.py`: background pipeline and task status store.
+- `app/services/speech_quality.py`: speech metrics (WPM, pauses, fillers, pitch).
+- `app/services/doc_parser.py`: Word (.docx/.docm) script parser.
 - Routers: `sessions.py`, `uploads.py`, `audio.py`, `slides.py`, `process.py`, `status.py`.
 - UI: `web/index.html` minimal interface for upload/record/browse/start.
