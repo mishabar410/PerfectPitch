@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PerfectPitch — Возражения</title>
+  <style>
+    :root { --brand:#3340d9; --muted:#6b7280; }
+    body { font-family:-apple-system, system-ui, Segoe UI, Roboto, sans-serif; margin:0; }
+    .topbar { background:#3340d9; color:#fff; padding:16px 24px; font-size:24px; font-weight:800; text-align:center; margin-bottom:16px; }
+    .wrap { padding:24px; max-width:1180px; margin:0 auto; }
+    .row { display:flex; align-items:center; gap:12px; }
+    h1 { font-size:34px; margin:0 0 10px 0; }
+    .btn { cursor:pointer; padding:10px 14px; border-radius:10px; border:1px solid #cbd5e1; background:#fff; }
+    .btn.primary { background:#3340d9; color:#fff; border-color:#2a32b8; }
+    .muted { color:#6b7280; }
+    .card { border:1px solid #e5e7eb; border-radius:12px; padding:16px; background:#fff; }
+    .grid { display:grid; grid-template-columns:1.1fr .9fr; gap:24px; }
+    .opt { border:1px solid #cbd5e1; border-radius:10px; padding:12px; background:#fff; cursor:pointer; }
+    .opt.selected { outline:2px solid var(--brand); background:#eef2ff; }
+    .opt.good { background:#d1fadf; border-color:#7cd992; }
+    .opt.bad { background:#fecaca; border-color:#f87171; }
+    .opt.mid { background:#fef08a; border-color:#facc15; }
+    .right-note { border:1px solid #e5e7eb; border-radius:10px; padding:14px; }
+    .footer { display:flex; justify-content:space-between; align-items:center; margin-top:14px; }
+    .placeholder { background:#e5e7eb; border-radius:10px; height:260px; }
+  </style>
+  <script>
+    function getSID(){ const u=new URLSearchParams(location.search).get('sid'); if(u){localStorage.setItem('pp_sid',u);return u;} return localStorage.getItem('pp_sid'); }
+
+    // For now, sample questions; in the future this can be replaced with LLM output
+    const SAMPLE = [
+      {
+        actor:"Скептик",
+        prompt:"почему дорого?",
+        options:[
+          { text:"Это инвестиция, а не затрата: ROI 200% за 6 месяцев", verdict:"good" },
+          { text:"Конкуренты берут больше", verdict:"bad" },
+          { text:"Мы даем пробный период", verdict:"mid" }
+        ],
+        explanation:"Скептик ждёт доказательств, а не обещаний"
+      },
+      {
+        actor:"Техдиректор",
+        prompt:"как вы масштабируете обработку?",
+        options:[
+          { text:"Горизонтально: stateless-сервисы + очередь задач", verdict:"good" },
+          { text:"Увеличим ресурсы сервера", verdict:"mid" },
+          { text:"Это не требуется", verdict:"bad" }
+        ],
+        explanation:"Важно описать архитектурный подход и обмен нагрузкой"
+      }
+    ];
+
+    let QUESTIONS = [];
+    let idx = 0; // current question index
+    let checked = false; // whether current question was checked
+    let stats = { total:0, good:0, mid:0, bad:0 };
+
+    function loadQuestions(){
+      // Hook: if we had model output, place it in localStorage as 'pp_mcq'
+      try { const fromLS = JSON.parse(localStorage.getItem('pp_mcq')||'null'); if (fromLS && Array.isArray(fromLS) && fromLS.length) { QUESTIONS = fromLS; } else { QUESTIONS = SAMPLE; } } catch(_) { QUESTIONS = SAMPLE; }
+      stats.total = QUESTIONS.length;
+    }
+
+    function renderQuestion(){
+      checked = false;
+      const q = QUESTIONS[idx];
+      document.getElementById('q_title').textContent = `${q.actor}: ${q.prompt}`;
+      const box = document.getElementById('opts');
+      box.innerHTML = '';
+      q.options.forEach((op, i)=>{
+        const div = document.createElement('div');
+        div.className = 'opt';
+        div.textContent = op.text;
+        div.dataset.i = i;
+        div.addEventListener('click', ()=> selectOption(i));
+        box.appendChild(div);
+      });
+      document.getElementById('note').textContent = '';
+      document.getElementById('checkBtn').style.display = 'inline-block';
+      document.getElementById('nextBtn').style.display = 'none';
+      updateProgress();
+    }
+
+    function selectOption(i){
+      if (checked) return; // lock after check
+      [...document.querySelectorAll('.opt')].forEach(el=> el.classList.remove('selected'));
+      const el = document.querySelector(`.opt[data-i="${i}"]`);
+      if (el) el.classList.add('selected');
+    }
+
+    function doCheck(){
+      const selected = document.querySelector('.opt.selected');
+      if (!selected) return;
+      const i = Number(selected.dataset.i);
+      const verdict = QUESTIONS[idx].options[i].verdict; // good | mid | bad
+      // colorize all options
+      document.querySelectorAll('.opt').forEach((el)=>{
+        const vi = QUESTIONS[idx].options[Number(el.dataset.i)].verdict;
+        el.classList.remove('selected');
+        el.classList.add(vi);
+      });
+      document.getElementById('note').textContent = QUESTIONS[idx].explanation;
+      if (verdict === 'good') stats.good++; else if (verdict === 'mid') stats.mid++; else stats.bad++;
+      checked = true;
+      document.getElementById('checkBtn').style.display = 'none';
+      document.getElementById('nextBtn').style.display = 'inline-block';
+    }
+
+    function nextQuestion(){
+      if (idx + 1 < QUESTIONS.length) {
+        idx++; renderQuestion();
+      } else {
+        showSummary();
+      }
+    }
+
+    function showSummary(){
+      document.getElementById('quiz').style.display = 'none';
+      document.getElementById('summary').style.display = 'grid';
+      // placeholders already in layout; could fill stats text later
+    }
+
+    function updateProgress(){
+      document.getElementById('progress').textContent = '5/5';
+    }
+
+    function goBack(){ const sid=getSID(); location.href='/ui/repetition.html' + (sid?('?sid='+encodeURIComponent(sid)):''); }
+    function finish(){ location.href = '/ui/'; }
+
+    document.addEventListener('DOMContentLoaded', ()=>{ loadQuestions(); renderQuestion(); });
+  </script>
+</head>
+<body>
+  <div class="topbar">PerfectPitch</div>
+  <div class="wrap">
+    <div class="row" style="justify-content:space-between;">
+      <h1>Возражения</h1>
+      <div id="progress" class="muted">5/5</div>
+    </div>
+
+    <!-- Quiz state -->
+    <div id="quiz" class="grid">
+      <div class="card">
+        <div class="row" style="gap:10px; align-items:flex-start;">
+          <div style="font-size:26px">😐</div>
+          <div id="q_title" style="font-weight:600">Скептик: почему дорого?</div>
+        </div>
+        <div id="opts" style="margin-top:12px; display:flex; flex-direction:column; gap:12px;">
+        </div>
+        <div style="margin-top:14px">
+          <button id="checkBtn" class="btn primary" onclick="doCheck()">Проверить</button>
+          <button id="nextBtn" class="btn primary" style="display:none" onclick="nextQuestion()">Следующий вопрос</button>
+        </div>
+      </div>
+      <div class="card">
+        <div id="note" class="right-note"></div>
+      </div>
+    </div>
+
+    <!-- Summary state (after all questions) -->
+    <div id="summary" class="grid" style="display:none; grid-template-columns:1fr 1fr; gap:24px;">
+      <div class="card">
+        <div style="text-align:center; font-weight:600; margin-bottom:8px">Статистика</div>
+        <div class="placeholder"></div>
+      </div>
+      <div class="card">
+        <div style="text-align:center; font-weight:600; margin-bottom:8px">Советы</div>
+        <div class="placeholder" style="height:300px"></div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <button class="btn" onclick="goBack()">← Назад</button>
+      <div></div>
+      <button class="btn primary" onclick="finish()">Завершить →</button>
+    </div>
+  </div>
+</body>
+</html>
+
+

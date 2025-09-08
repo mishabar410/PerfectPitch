@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PerfectPitch — Анализ текста</title>
+  <style>
+    :root { --brand:#3340d9; --muted:#6b7280; }
+    body { font-family:-apple-system, system-ui, Segoe UI, Roboto, sans-serif; margin:0; }
+    .topbar { background:#3340d9; color:#fff; padding:16px 24px; font-size:24px; font-weight:800; text-align:center; margin-bottom:16px; }
+    .wrap { padding:24px; max-width:1200px; margin:0 auto; }
+    h1 { font-size:34px; margin:0 0 10px 0; }
+    .grid { display:grid; grid-template-columns:1fr 1fr; gap:24px; }
+    .drop { border:2px dashed #cbd5e1; border-radius:12px; height:92px; display:flex; align-items:center; justify-content:center; color:#9aa3af; }
+    textarea { width:100%; height:260px; border:1px solid #cbd5e1; border-radius:12px; padding:10px; resize:vertical; }
+    .card { border:1px solid #e5e7eb; border-radius:12px; padding:16px; }
+    .muted { color:#6b7280; font-size:12px; }
+    .row { display:flex; align-items:center; gap:12px; }
+    .btn { cursor:pointer; padding:10px 14px; border-radius:10px; border:1px solid #cbd5e1; background:#fff; }
+    .btn.primary { background:#3340d9; color:#fff; border-color:#2a32b8; }
+    .footer { display:flex; justify-content:space-between; align-items:center; margin-top:18px; }
+    .score { width:92px; height:92px; border-radius:50%; border:8px solid #8be28b; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:20px; color:#1a5f1a; }
+  </style>
+  <script>
+    async function api(path, opts={}) {
+      const res = await fetch(path, opts);
+      if (!res.ok) throw new Error(await res.text());
+      return res.headers.get('content-type')?.includes('application/json') ? res.json() : res.text();
+    }
+
+    function getSID() {
+      const urlSid = new URLSearchParams(location.search).get('sid');
+      if (urlSid) { localStorage.setItem('pp_sid', urlSid); return urlSid; }
+      return localStorage.getItem('pp_sid');
+    }
+
+    async function ensureSID() {
+      let sid = getSID();
+      if (!sid) { const d = await api('/sessions', {method:'POST'}); sid = d.session_id; localStorage.setItem('pp_sid', sid); }
+      document.getElementById('sid').textContent = sid;
+      return sid;
+    }
+
+    async function uploadText() {
+      const sid = await ensureSID();
+      const txt = (document.getElementById('text').value || '').slice(0, 1500);
+      const blob = new Blob([txt], {type:'text/plain; charset=utf-8'});
+      const fd = new FormData(); fd.append('file', blob, 'script.txt');
+      await api(`/uploads/${sid}`, {method:'POST', body: fd});
+      document.getElementById('right-pane').classList.remove('hidden');
+    }
+
+    async function uploadFile() {
+      const sid = await ensureSID();
+      const inp = document.getElementById('file');
+      const file = inp.files[0]; if (!file) return;
+      const fd = new FormData(); fd.append('file', file, file.name || 'script.txt');
+      await api(`/uploads/${sid}`, {method:'POST', body: fd});
+      document.getElementById('right-pane').classList.remove('hidden');
+    }
+
+    function goNext() {
+      const sid = getSID();
+      location.href = '/ui/slides.html' + (sid ? ('?sid=' + encodeURIComponent(sid)) : '');
+    }
+  </script>
+</head>
+<body>
+  <div class="topbar">PerfectPitch</div>
+  <div class="wrap">
+    <div class="row" style="justify-content:space-between;">
+      <h1>Анализ текста</h1>
+      <div class="muted">2/5</div>
+    </div>
+    <div class="grid">
+      <div>
+        <div class="muted" style="margin-bottom:6px">Загрузите текст презентации или введите в поле ниже</div>
+        <label class="drop" for="file">Перетащите файл сюда или выберите…</label>
+        <input id="file" type="file" accept=".txt,.md,.docx,.doc" style="display:none" onchange="uploadFile()" />
+        <div style="height:12px"></div>
+        <textarea id="text" placeholder="Введите или вставьте текст (до 1500 символов)"></textarea>
+        <div class="muted">Ограничение: 1500 символов</div>
+        <div style="height:8px"></div>
+        <button class="btn primary" onclick="uploadText()">Проверить</button>
+      </div>
+      <div id="right-pane" class="card hidden">
+        <div class="row" style="gap:14px; align-items:center;">
+          <div class="score">75%</div>
+          <div class="muted">соответствие целям</div>
+        </div>
+        <div style="height:12px"></div>
+        <div><strong>Рекомендации</strong></div>
+        <div class="muted">(результаты появятся здесь позже)</div>
+        <div style="height:12px"></div>
+        <div><strong>Тезисы</strong></div>
+        <ul class="muted" style="margin-top:6px">
+          <li>—</li>
+        </ul>
+        <div style="height:12px"></div>
+        <button class="btn">экспортировать тезисы</button>
+      </div>
+    </div>
+
+    <div class="footer">
+      <a class="btn" href="/ui/questions.html">← Назад</a>
+      <div class="muted">session_id: <code id="sid">—</code></div>
+      <button class="btn primary" onclick="goNext()">Далее →</button>
+    </div>
+  </div>
+
+  <script>ensureSID();</script>
+</body>
+</html>
+
+

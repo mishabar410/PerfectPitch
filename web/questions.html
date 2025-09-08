@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PerfectPitch — Настройка профиля</title>
+  <style>
+    :root { --brand:#3340d9; --text:#0f172a; --muted:#475569; }
+    body { font-family:-apple-system, system-ui, Segoe UI, Roboto, sans-serif; margin:0; color:var(--text); }
+    .topbar { background:#3340d9; color:#fff; padding:16px 24px; font-size:22px; font-weight:700; text-align:center; margin-bottom:16px; }
+    .container { max-width:920px; margin:0 auto; padding:24px; }
+    h1 { font-size:28px; margin:0 0 8px 0; }
+    .card { border:1px solid #e5e7eb; border-radius:12px; padding:18px; margin:16px 0; }
+    .row { display:flex; flex-wrap:wrap; gap:10px; margin:8px 0; }
+    .btn { cursor:pointer; padding:8px 12px; border-radius:10px; border:1px solid #cbd5e1; background:#fff; }
+    .btn.primary { background:var(--brand); color:#fff; border-color:#2a32b8; }
+    .btn.selected { outline:2px solid var(--brand); background:#eef2ff; }
+    .muted { color:var(--muted); font-size:12px; }
+    input[type=text] { width:100%; padding:8px 10px; border-radius:10px; border:1px solid #cbd5e1; }
+    .footer { display:flex; justify-content:space-between; align-items:center; margin-top:16px; }
+  </style>
+  <script>
+    function getSID() {
+      const urlSid = new URLSearchParams(location.search).get('sid');
+      if (urlSid) { localStorage.setItem('pp_sid', urlSid); return urlSid; }
+      const st = localStorage.getItem('pp_sid');
+      return st || null;
+    }
+
+    async function api(path, opts={}) {
+      const res = await fetch(path, opts);
+      if (!res.ok) throw new Error(await res.text());
+      return res.headers.get('content-type')?.includes('application/json') ? res.json() : res.text();
+    }
+
+    async function ensureSession() {
+      let sid = getSID();
+      if (!sid) {
+        const data = await api('/sessions', { method: 'POST' });
+        sid = data.session_id;
+        localStorage.setItem('pp_sid', sid);
+      }
+      document.getElementById('sid').textContent = sid;
+      return sid;
+    }
+
+    function toggleSelect(group, value) {
+      const inputs = document.querySelectorAll(`[data-group="${group}"]`);
+      inputs.forEach(b => {
+        if (b.dataset.value === value) b.classList.add('selected');
+        else b.classList.remove('selected');
+      });
+    }
+
+    function readSelections() {
+      const get = (group) => {
+        const el = document.querySelector(`[data-group="${group}"].selected`);
+        return el ? el.dataset.value : null;
+      };
+      const selectedGoal = get('goal');
+      const otherVal = (document.getElementById('goal_other').value || '').trim();
+      return {
+        goal: selectedGoal,
+        goal_other: selectedGoal === 'Другое' ? (otherVal || null) : null,
+        audience: get('audience'),
+        format: get('format'),
+        experience: get('experience'),
+        timing_min: Number(document.getElementById('timing').value),
+      };
+    }
+
+    function restoreSelections(meta) {
+      if (!meta) return;
+      if (meta.goal === 'Другое') toggleSelect('goal', 'Другое');
+      else if (meta.goal) toggleSelect('goal', String(meta.goal));
+      if (meta.audience) toggleSelect('audience', String(meta.audience));
+      if (meta.format) toggleSelect('format', String(meta.format));
+      if (meta.experience) toggleSelect('experience', String(meta.experience));
+      if (meta.timing_min) document.getElementById('timing').value = Number(meta.timing_min);
+      if (meta.goal_other) document.getElementById('goal_other').value = meta.goal_other;
+      updateGoalOtherVisibility();
+      renderSummary();
+    }
+
+    function updateGoalOtherVisibility() {
+      const sel = document.querySelector('[data-group="goal"].selected');
+      const wrap = document.getElementById('goal_other_wrap');
+      if (!wrap) return;
+      if (sel && sel.dataset.value === 'Другое') {
+        wrap.style.display = 'block';
+      } else {
+        wrap.style.display = 'none';
+      }
+    }
+
+    function renderSummary() {
+      const m = readSelections();
+      const parts = [];
+      if (m.timing_min) parts.push(`${m.timing_min}-минутный`);
+      if (m.format) parts.push(m.format + '-питч');
+      if (m.audience) parts.push(`для ${m.audience}`);
+      if (m.experience) parts.push(`Уровень — ${m.experience}`);
+      const goalText = m.goal === 'Другое' ? (m.goal_other || '') : (m.goal || '');
+      if (goalText) parts.push(`Цель — ${goalText.toLowerCase()}.`);
+      document.getElementById('summary').textContent = parts.length ? ('Вы готовите ' + parts.join('.')) : '';
+    }
+
+    async function saveAndNext() {
+      const sid = await ensureSession();
+      const meta = readSelections();
+      // persist to localStorage for reuse
+      localStorage.setItem('pp_meta', JSON.stringify(meta));
+
+      // upload meta.json to backend
+      const blob = new Blob([JSON.stringify(meta)], { type: 'application/json' });
+      const fd = new FormData();
+      fd.append('file', blob, 'meta.json');
+      await api(`/uploads/${sid}`, { method: 'POST', body: fd });
+      // go to text page
+      location.href = '/ui/text.html?sid=' + encodeURIComponent(sid);
+    }
+
+    function onSelect(ev) {
+      const btn = ev.currentTarget;
+      toggleSelect(btn.dataset.group, btn.dataset.value);
+      if (btn.dataset.group === 'goal') {
+        updateGoalOtherVisibility();
+        if (btn.dataset.value === 'Другое') {
+          try { document.getElementById('goal_other').focus(); } catch(_) {}
+        }
+      }
+      renderSummary();
+    }
+
+    document.addEventListener('DOMContentLoaded', async () => {
+      document.querySelectorAll('[data-group]').forEach(b => b.addEventListener('click', onSelect));
+      document.getElementById('goal_other').addEventListener('input', renderSummary);
+      document.getElementById('timing').addEventListener('input', renderSummary);
+      const sid = await ensureSession();
+      // load previous meta from localStorage if any
+      try { restoreSelections(JSON.parse(localStorage.getItem('pp_meta') || 'null')); } catch(_) {}
+      updateGoalOtherVisibility();
+    });
+  </script>
+</head>
+<body>
+  <div class="topbar">PerfectPitch</div>
+  <div class="container">
+    <h1>Настройка профиля</h1>
+    <div class="muted">session_id: <code id="sid">—</code></div>
+
+    <div class="card">
+      <div><strong>Цель презентации</strong></div>
+      <div class="row">
+        <button class="btn selected" data-group="goal" data-value="Продать">Продать</button>
+        <button class="btn" data-group="goal" data-value="Проинформировать">Проинформировать</button>
+        <button class="btn" data-group="goal" data-value="Убедить">Убедить</button>
+        <button class="btn" data-group="goal" data-value="Другое">Другое</button>
+      </div>
+      <div id="goal_other_wrap" style="display:none; margin-top:8px;">
+        <input type="text" id="goal_other" placeholder="Введите вашу цель" />
+      </div>
+    </div>
+
+    <div class="card">
+      <div><strong>Аудитория</strong></div>
+      <div class="row">
+        <button class="btn" data-group="audience" data-value="B2B (1–3 человека)">B2B (1–3 человека)</button>
+        <button class="btn selected" data-group="audience" data-value="B2B (группа)">B2B (группа)</button>
+      </div>
+      <div class="row">
+        <button class="btn" data-group="audience" data-value="B2C (индивидуальный клиент)">B2C (индивидуальный клиент)</button>
+        <button class="btn" data-group="audience" data-value="B2C (массовая аудитория)">B2C (массовая аудитория)</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div><strong>Формат</strong></div>
+      <div class="row">
+        <button class="btn selected" data-group="format" data-value="онлайн">Онлайн</button>
+        <button class="btn" data-group="format" data-value="офлайн">Офлайн</button>
+        <button class="btn" data-group="format" data-value="гибрид">Гибрид</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div><strong>Опыт</strong></div>
+      <div class="row">
+        <button class="btn" data-group="experience" data-value="новичок">Новичок</button>
+        <button class="btn" data-group="experience" data-value="средний">Средний</button>
+        <button class="btn selected" data-group="experience" data-value="профессионал">Профессионал</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div><strong>Тайминг</strong></div>
+      <div class="row" style="align-items:center; gap:16px;">
+        <span class="muted">5 мин</span>
+        <input type="range" id="timing" min="5" max="30" step="1" value="15" />
+        <span class="muted">30 мин</span>
+      </div>
+      <div id="summary" class="muted" style="margin-top:10px"></div>
+    </div>
+
+    <div class="footer">
+      <a class="btn" href="/ui/">← На главную</a>
+      <button class="btn primary" onclick="saveAndNext()">Далее →</button>
+    </div>
+  </div>
+</body>
+</html>
+
+

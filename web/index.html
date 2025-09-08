@@ -3,365 +3,54 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>PerfectPitch MVP UI</title>
+  <title>PerfectPitch — тренажёр выступлений</title>
   <style>
-    body { font-family: -apple-system, system-ui, Segoe UI, Roboto, sans-serif; margin: 24px; line-height: 1.4; }
-    .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
-    label { display:block; margin: 8px 0 4px; font-weight: 600; }
-    input[type=file] { margin-bottom: 8px; }
-    button { cursor:pointer; padding:8px 12px; border-radius:6px; border:1px solid #d1d5db; background:#111827; color:#fff; }
-    button.secondary { background:#fff; color:#111827; }
-    .row { display:flex; gap:12px; align-items:center; flex-wrap: wrap; }
-    .muted { color:#6b7280; font-size: 12px; }
-    pre { background:#0b1020; color:#d1f3ff; padding:12px; border-radius:8px; overflow:auto; }
-    .slide-stage { border:1px solid #e5e7eb; border-radius:8px; padding:12px; min-height: 220px; display:flex; align-items:center; justify-content:center; background:#fff; }
-    .slide-stage img { max-width:100%; height:auto; border-radius:6px; border:1px solid #e5e7eb; display:block; opacity:1; transition: opacity 120ms ease; }
-    .hidden { display:none; }
+    :root {
+      --brand:#3340d9;
+      --brand-dark:#2a32b8;
+      --text:#0f172a;
+      --muted:#475569;
+      --bg:#ffffff;
+    }
+    body { font-family: -apple-system, system-ui, Segoe UI, Roboto, sans-serif; margin:0; line-height:1.4; background:var(--bg); color:var(--text); }
+    .topbar { background:var(--brand); color:#fff; padding:18px 28px; font-weight:700; font-size:24px; box-shadow:0 1px 0 rgba(0,0,0,.08); text-align:center; margin-bottom:16px; }
+    .container { max-width:1100px; margin:0 auto; padding:36px 24px; }
+    .hero { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:32px; padding:32px 0; }
+    .hero h1 { font-size:44px; line-height:1.12; margin:0 0 16px 0; }
+    .hero p { margin:0 0 8px 0; color:var(--muted); font-size:18px; }
+    .cta { display:inline-block; background:var(--brand); color:#fff; text-decoration:none; padding:12px 18px; border-radius:10px; font-weight:600; border:1px solid rgba(0,0,0,.08); box-shadow:0 2px 0 var(--brand-dark); }
+    .cta:hover { background:var(--brand-dark); }
+    .art { flex:1 1 420px; min-width:320px; display:flex; align-items:center; justify-content:center; }
+    .copy { flex:1 1 420px; min-width:300px; }
+    .monitor { width:440px; max-width:100%; height:auto; }
   </style>
-  <script>
-  async function api(path, opts={}) {
-    const res = await fetch(path, opts);
-    if (!res.ok) throw new Error(await res.text());
-    return res.headers.get('content-type')?.includes('application/json') ? res.json() : res.text();
-  }
-
-  let SID = null;
-  let MEDIA_REC = null;
-  let TASK = null;
-  let STATUS_TIMER = null;
-  let SLIDES = [];
-  let SLIDE_IMAGES = [];
-  const IMG_CACHE = new Map();
-  let CURRENT_SLIDE_IDX = 0; // 0-based
-  let RECORD_STARTED_AT = null; // performance.now() at start
-  let TIMELINE = []; // {index: 1-based, start_ms, end_ms}
-  let REC_STATE = 'idle'; // idle | recording | paused
-
-  async function createSession() {
-    // Create a new upload session on page load; the session_id is used for all API calls
-    const data = await api('/sessions', { method: 'POST' });
-    SID = data.session_id;
-    document.getElementById('sid').textContent = SID;
-    log('Сессия создана: ' + SID);
-  }
-
-  async function uploadFile(inputEl, filename) {
-    // Upload a file to /uploads/{SID}. For PPTX, auto-load slides and render PNGs, then reveal controls.
-    if (!SID) throw new Error('Нет session_id');
-    const file = inputEl.files[0];
-    if (!file) throw new Error('Файл не выбран');
-    const fd = new FormData();
-    const name = filename || file.name;
-    fd.append('file', file, name);
-    await api(`/uploads/${SID}`, { method: 'POST', body: fd });
-    log(`Загружено: ${name}`);
-    if (name.endsWith('.pptx') || name.endsWith('.pptm')) {
-      await loadSlides();
-      await renderSlideImages();
-      const au = document.getElementById('after-upload');
-      if (au) au.classList.remove('hidden');
-    }
-  }
-
-  async function startRecording() {
-    // Start mic recording; stream chunks to the backend; start slide timeline
-    if (!SID) throw new Error('Нет session_id');
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    TIMELINE = [];
-    MEDIA_REC = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
-    MEDIA_REC.ondataavailable = async (e) => {
-      if (e.data && e.data.size > 0) {
-        const fd = new FormData();
-        fd.append('chunk', e.data, 'chunk.webm');
-        await api(`/audio/${SID}/chunk`, { method: 'POST', body: fd });
-      }
-    };
-    MEDIA_REC.start(1000);
-    log('Запись начата');
-    RECORD_STARTED_AT = performance.now();
-    // start first slide interval
-    if (SLIDES.length > 0) {
-      TIMELINE.push({ index: CURRENT_SLIDE_IDX + 1, start_ms: 0, end_ms: null });
-    }
-    REC_STATE = 'recording';
-    renderRecordControls();
-  }
-
-  async function stopRecording() {
-    // Stop mic recording; finalize audio; upload data.json with slide timings
-    if (!MEDIA_REC) return;
-    await new Promise(r => { MEDIA_REC.onstop = r; MEDIA_REC.stop(); });
-    await api(`/audio/${SID}/finalize`, { method: 'POST' });
-    log('Запись завершена и сохранена');
-    // finalize current slide window
-    if (TIMELINE.length > 0) {
-      const now = performance.now();
-      const last = TIMELINE[TIMELINE.length - 1];
-      if (last && last.end_ms == null) last.end_ms = Math.round(now - RECORD_STARTED_AT);
-    }
-    // upload data.json
-    const data = { lang_hint: 'ru', slides: TIMELINE };
-    const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
-    const fd = new FormData();
-    fd.append('file', blob, 'data.json');
-    await api(`/uploads/${SID}`, { method: 'POST', body: fd });
-    log('Отправлен data.json с таймкодами');
-    REC_STATE = 'idle';
-    renderRecordControls();
-  }
-
-  async function startProcess() {
-    if (!SID) throw new Error('Нет session_id');
-    const { task_id } = await api(`/process/${SID}`, { method: 'POST' });
-    TASK = task_id;
-    log('Задача запущена: ' + TASK);
-    pollStatus();
-  }
-
-  async function pollStatus() {
-    clearInterval(STATUS_TIMER);
-    STATUS_TIMER = setInterval(async () => {
-      if (!TASK) return;
-      try {
-        const st = await api(`/status/${TASK}`);
-        document.getElementById('status').textContent = `${st.state} ${st.stage || ''} ${st.progress_pct || 0}%`;
-        if (st.state === 'DONE') {
-          clearInterval(STATUS_TIMER);
-          log('Готово. Забираю артефакты...');
-          const report = await api(`/artifacts/${SID}/report.json`);
-          document.getElementById('report').textContent = JSON.stringify(report, null, 2);
-          const feedback = await fetch(`/artifacts/${SID}/feedback.md`).then(r => r.text());
-          document.getElementById('feedback').textContent = feedback;
-        }
-        if (st.state === 'FAILED') {
-          clearInterval(STATUS_TIMER);
-          log('Ошибка: ' + (st.error_message || 'unknown'));
-        }
-      } catch (e) {
-        clearInterval(STATUS_TIMER);
-        log('Status error: ' + e);
-      }
-    }, 1500);
-  }
-
-  function log(msg) {
-    const el = document.getElementById('log');
-    el.textContent += `\n${new Date().toLocaleTimeString()}  ${msg}`;
-    el.scrollTop = el.scrollHeight;
-  }
-
-  async function loadSlides() {
-    const res = await api(`/slides/${SID}`);
-    SLIDES = res.slides || [];
-    CURRENT_SLIDE_IDX = 0;
-    renderSlide();
-  }
-
-  async function renderSlideImages() {
-    // Render PPTX to PNG on the backend; update SLIDE_IMAGES
-    const res = await api(`/slides/${SID}/render`, { method: 'POST' });
-    SLIDE_IMAGES = res.images || [];
-    renderSlide();
-  }
-
-  function renderSlide() {
-    const slide = SLIDES[CURRENT_SLIDE_IDX];
-    const imgEl = document.getElementById('slide-img');
-    const textEl = document.getElementById('slide-text');
-    if (!slide) {
-      textEl.classList.remove('hidden');
-      imgEl.classList.add('hidden');
-      textEl.innerHTML = '<div class="muted">Слайдов нет</div>';
-      return;
-    }
-    const imgUrl = SLIDE_IMAGES[CURRENT_SLIDE_IDX];
-    if (imgUrl) {
-      // keep current image visible until the next is loaded
-      ensureImage(imgUrl).then(() => {
-        imgEl.style.opacity = 0.2;
-        // set src to cached url (no flicker expected)
-        imgEl.src = imgUrl;
-        textEl.classList.add('hidden');
-        imgEl.classList.remove('hidden');
-        // small async to allow paint before fade-in
-        requestAnimationFrame(() => { imgEl.style.opacity = 1; });
-      }).catch(() => {
-        // fallback to text if image fails
-        renderSlideText(slide, textEl, imgEl);
-      });
-      // Preload neighbors
-      preloadNeighbor(CURRENT_SLIDE_IDX - 1);
-      preloadNeighbor(CURRENT_SLIDE_IDX + 1);
-    } else {
-      renderSlideText(slide, textEl, imgEl);
-    }
-    document.getElementById('slide-num').textContent = `${slide.index} / ${SLIDES.length}`;
-  }
-
-  function renderSlideText(slide, textEl, imgEl) {
-    const bullets = (slide.bullets || []).map(b => `<li>${escapeHtml(b)}</li>`).join('');
-    textEl.innerHTML = `
-      <h3>${escapeHtml(slide.title || ('Slide ' + slide.index))}</h3>
-      <ul>${bullets}</ul>
-      <div class="muted">Notes: ${escapeHtml(slide.notes || '')}</div>
-    `;
-    textEl.classList.remove('hidden');
-    imgEl.classList.add('hidden');
-  }
-
-  function ensureImage(url) {
-    if (!url) return Promise.reject();
-    const cached = IMG_CACHE.get(url);
-    if (cached === 'ready') return Promise.resolve();
-    if (cached && typeof cached.then === 'function') return cached;
-    const img = new Image();
-    img.decoding = 'async';
-    const p = new Promise((resolve, reject) => {
-      img.onload = () => { IMG_CACHE.set(url, 'ready'); resolve(); };
-      img.onerror = reject;
-    });
-    IMG_CACHE.set(url, p);
-    img.src = url;
-    return p;
-  }
-
-  function preloadNeighbor(idx) {
-    if (idx < 0 || idx >= SLIDE_IMAGES.length) return;
-    const url = SLIDE_IMAGES[idx];
-    if (url) ensureImage(url);
-  }
-
-  function pauseRecording() {
-    if (!MEDIA_REC || MEDIA_REC.state !== 'recording') return;
-    try { MEDIA_REC.pause(); } catch (e) {}
-    REC_STATE = 'paused';
-    renderRecordControls();
-  }
-
-  function resumeRecording() {
-    if (!MEDIA_REC || MEDIA_REC.state !== 'paused') return;
-    try { MEDIA_REC.resume(); } catch (e) {}
-    REC_STATE = 'recording';
-    renderRecordControls();
-  }
-
-  function renderRecordControls() {
-    const box = document.getElementById('record-controls');
-    if (!box) return;
-    if (REC_STATE === 'idle') {
-      box.innerHTML = `<button onclick="startRecording()">Начать запись</button>`;
-      return;
-    }
-    if (REC_STATE === 'recording') {
-      // Only one button while recording: Pause
-      box.innerHTML = `<button class="secondary" onclick="pauseRecording()">Пауза</button>`;
-      return;
-    }
-    if (REC_STATE === 'paused') {
-      // Two buttons when paused: Continue and Stop
-      box.innerHTML = `
-        <button onclick="resumeRecording()">Продолжить</button>
-        <button class="secondary" onclick="stopRecording()">Стоп</button>
-      `;
-      return;
-    }
-  }
-
-  function prevSlide() { switchSlide(-1); }
-  function nextSlide() { switchSlide(1); }
-
-  function switchSlide(delta) {
-    if (!SLIDES.length) return;
-    const newIdx = Math.min(Math.max(0, CURRENT_SLIDE_IDX + delta), SLIDES.length - 1);
-    if (newIdx === CURRENT_SLIDE_IDX) return;
-    // close previous interval and open new, only while recording
-    const rec = MEDIA_REC && MEDIA_REC.state === 'recording';
-    const now = performance.now();
-    if (rec && TIMELINE.length > 0) {
-      const last = TIMELINE[TIMELINE.length - 1];
-      if (last && last.end_ms == null) last.end_ms = Math.round(now - RECORD_STARTED_AT);
-      TIMELINE.push({ index: newIdx + 1, start_ms: Math.round(now - RECORD_STARTED_AT), end_ms: null });
-    }
-    CURRENT_SLIDE_IDX = newIdx;
-    renderSlide();
-  }
-
-  function escapeHtml(s) {
-    return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
-  }
-  </script>
 </head>
 <body>
-  <h1>PerfectPitch MVP</h1>
-  <div class="card">
-    <div class="row">
-      <div>session_id: <code id="sid">—</code></div>
-    </div>
-  </div>
-
-  <div class="card">
-    <label>Загрузка презентации</label>
-    <input type="file" id="deck" accept=".pptx,.pptm" />
-    <div class="row">
-      <button class="secondary" onclick="uploadFile(deck,'pptx.pptx')">Загрузить PPTX</button>
-    </div>
-    <div class="muted">Можно также загрузить meta.json и data.json тем же методом.</div>
-  </div>
-
-  <div class="card">
-    <label>Загрузка текста (Word скрипт)</label>
-    <input type="file" id="script" accept=".docx,.docm,.doc" />
-    <div class="row">
-      <button class="secondary" onclick="uploadFile(script,script.files[0]?.name||'word.docx')">Загрузить скрипт</button>
-    </div>
-    <div class="muted">Файл будет использован для сравнения с речью и проверки качества текста.</div>
-  </div>
-
-  <div id="after-upload" class="hidden">
-    <div class="card">
-      <label>Слайды</label>
-      <div id="slide-box" class="slide-stage">
-        <img id="slide-img" alt="slide" />
-        <div id="slide-text"></div>
+  <div class="topbar">PerfectPitch</div>
+  <div class="container">
+    <div class="hero">
+      <div class="copy">
+        <h1>Готовьтесь
+          <br/>к выступлениям
+          <br/>с ИИ‑тренажером</h1>
+        <p>Анализ текста, слайдов и речи в реальном времени.</p>
+        <p>Тренировка вопросов и возражений.</p>
+        <div style="margin-top:18px">
+          <a class="cta" href="/ui/questions.html">Начать тренировку</a>
+        </div>
       </div>
-      <div class="row">
-        <button class="secondary" onclick="prevSlide()">← Пред.</button>
-        <span id="slide-num" class="muted">—</span>
-        <button class="secondary" onclick="nextSlide()">След. →</button>
+      <div class="art" aria-hidden="true">
+        <!-- Simple illustration -->
+        <svg class="monitor" viewBox="0 0 512 384" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="56" y="64" width="400" height="240" rx="18" fill="#5f73f1"/>
+          <rect x="84" y="92" width="344" height="184" rx="8" fill="#ffffff"/>
+          <polygon points="140,184 140,144 204,184 140,224" fill="#6c8cff"/>
+          <rect x="232" y="150" width="120" height="16" rx="8" fill="#6c8cff"/>
+          <rect x="232" y="180" width="96" height="14" rx="7" fill="#9fb4ff"/>
+          <rect x="232" y="210" width="64" height="14" rx="7" fill="#9fe1cf"/>
+          <rect x="208" y="312" width="96" height="10" rx="5" fill="#c7cdfa"/>
+        </svg>
       </div>
-    </div>
-
-  <script>
-    document.addEventListener('DOMContentLoaded', () => {
-      createSession().catch(e => {
-        try { console.error(e); } catch (_) {}
-      });
-    });
-  </script>
-
-    <div class="card">
-      <label>Запись аудио</label>
-      <div id="record-controls" class="row"></div>
-      <script>renderRecordControls();</script>
-    </div>
-
-    <div class="card">
-      <div class="row">
-        <button onclick="startProcess()">Запустить анализ</button>
-        <div>Статус: <code id="status">—</code></div>
-      </div>
-    </div>
-
-    <div class="card">
-      <h3>Report</h3>
-      <pre id="report"></pre>
-      <h3>Feedback</h3>
-      <pre id="feedback"></pre>
-    </div>
-
-    <div class="card">
-      <h3>Log</h3>
-      <pre id="log" style="height:160px"></pre>
     </div>
   </div>
 </body>
