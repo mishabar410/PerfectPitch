@@ -28,89 +28,54 @@
   <script>
     function getSID(){ const u=new URLSearchParams(location.search).get('sid'); if(u){localStorage.setItem('pp_sid',u);return u;} return localStorage.getItem('pp_sid'); }
 
-    // For now, sample questions; in the future this can be replaced with LLM output
-    const SAMPLE = [
-      {
-        actor:"Скептик",
-        prompt:"почему дорого?",
-        options:[
-          { text:"Это инвестиция, а не затрата: ROI 200% за 6 месяцев", verdict:"good" },
-          { text:"Конкуренты берут больше", verdict:"bad" },
-          { text:"Мы даем пробный период", verdict:"mid" }
-        ],
-        explanation:"Скептик ждёт доказательств, а не обещаний"
-      },
-      {
-        actor:"Техдиректор",
-        prompt:"как вы масштабируете обработку?",
-        options:[
-          { text:"Горизонтально: stateless-сервисы + очередь задач", verdict:"good" },
-          { text:"Увеличим ресурсы сервера", verdict:"mid" },
-          { text:"Это не требуется", verdict:"bad" }
-        ],
-        explanation:"Важно описать архитектурный подход и обмен нагрузкой"
+    // Data from API: {roles:[{actor, objections:[{prompt, answer}]}]}
+    let ROLES = [];
+    let roleIdx = 0;
+
+    async function loadFromAPI(){
+      const sid = getSID();
+      try {
+        const data = await fetch(`/questions/${sid}`).then(r=>{ if(!r.ok) throw new Error('fail'); return r.json(); });
+        ROLES = Array.isArray(data.roles) ? data.roles : [];
+      } catch(_) {
+        ROLES = [];
       }
-    ];
-
-    let QUESTIONS = [];
-    let idx = 0; // current question index
-    let checked = false; // whether current question was checked
-    let stats = { total:0, good:0, mid:0, bad:0 };
-
-    function loadQuestions(){
-      // Hook: if we had model output, place it in localStorage as 'pp_mcq'
-      try { const fromLS = JSON.parse(localStorage.getItem('pp_mcq')||'null'); if (fromLS && Array.isArray(fromLS) && fromLS.length) { QUESTIONS = fromLS; } else { QUESTIONS = SAMPLE; } } catch(_) { QUESTIONS = SAMPLE; }
-      stats.total = QUESTIONS.length;
     }
 
-    function renderQuestion(){
-      checked = false;
-      const q = QUESTIONS[idx];
-      document.getElementById('q_title').textContent = `${q.actor}: ${q.prompt}`;
+    function renderRole(){
+      const r = ROLES[roleIdx];
+      const title = r ? r.actor : '—';
+      document.getElementById('q_title').textContent = title;
       const box = document.getElementById('opts');
       box.innerHTML = '';
-      q.options.forEach((op, i)=>{
-        const div = document.createElement('div');
-        div.className = 'opt';
-        div.textContent = op.text;
-        div.dataset.i = i;
-        div.addEventListener('click', ()=> selectOption(i));
-        box.appendChild(div);
-      });
+      if (r && Array.isArray(r.objections)) {
+        r.objections.forEach((obj, i)=>{
+          const div = document.createElement('div');
+          div.className = 'opt';
+          div.textContent = obj.prompt;
+          div.dataset.i = i;
+          div.addEventListener('click', ()=> selectObjection(i));
+          box.appendChild(div);
+        });
+      }
       document.getElementById('note').textContent = '';
-      document.getElementById('checkBtn').style.display = 'inline-block';
-      document.getElementById('nextBtn').style.display = 'none';
+      const nextBtn = document.getElementById('nextBtn');
+      if (nextBtn) nextBtn.style.display = (roleIdx + 1 < ROLES.length) ? 'inline-block' : 'none';
       updateProgress();
     }
 
-    function selectOption(i){
-      if (checked) return; // lock after check
+    function selectObjection(i){
       [...document.querySelectorAll('.opt')].forEach(el=> el.classList.remove('selected'));
       const el = document.querySelector(`.opt[data-i="${i}"]`);
       if (el) el.classList.add('selected');
+      const r = ROLES[roleIdx];
+      const obj = r && r.objections ? r.objections[i] : null;
+      document.getElementById('note').textContent = obj ? obj.answer : '';
     }
 
-    function doCheck(){
-      const selected = document.querySelector('.opt.selected');
-      if (!selected) return;
-      const i = Number(selected.dataset.i);
-      const verdict = QUESTIONS[idx].options[i].verdict; // good | mid | bad
-      // colorize all options
-      document.querySelectorAll('.opt').forEach((el)=>{
-        const vi = QUESTIONS[idx].options[Number(el.dataset.i)].verdict;
-        el.classList.remove('selected');
-        el.classList.add(vi);
-      });
-      document.getElementById('note').textContent = QUESTIONS[idx].explanation;
-      if (verdict === 'good') stats.good++; else if (verdict === 'mid') stats.mid++; else stats.bad++;
-      checked = true;
-      document.getElementById('checkBtn').style.display = 'none';
-      document.getElementById('nextBtn').style.display = 'inline-block';
-    }
-
-    function nextQuestion(){
-      if (idx + 1 < QUESTIONS.length) {
-        idx++; renderQuestion();
+    function nextRole(){
+      if (roleIdx + 1 < ROLES.length) {
+        roleIdx++; renderRole();
       } else {
         showSummary();
       }
@@ -123,13 +88,14 @@
     }
 
     function updateProgress(){
-      document.getElementById('progress').textContent = '5/5';
+      const total = ROLES.length || 1;
+      document.getElementById('progress').textContent = `${Math.min(roleIdx+1,total)}/${total}`;
     }
 
     function goBack(){ const sid=getSID(); location.href='/ui/repetition.html' + (sid?('?sid='+encodeURIComponent(sid)):''); }
     function finish(){ location.href = '/ui/'; }
 
-    document.addEventListener('DOMContentLoaded', ()=>{ loadQuestions(); renderQuestion(); });
+    document.addEventListener('DOMContentLoaded', async ()=>{ await loadFromAPI(); renderRole(); });
   </script>
 </head>
 <body>
@@ -144,14 +110,13 @@
     <div id="quiz" class="grid">
       <div class="card">
         <div class="row" style="gap:10px; align-items:flex-start;">
-          <div style="font-size:26px">😐</div>
-          <div id="q_title" style="font-weight:600">Скептик: почему дорого?</div>
+          <div style="font-size:26px">🤔</div>
+          <div id="q_title" style="font-weight:600">—</div>
         </div>
         <div id="opts" style="margin-top:12px; display:flex; flex-direction:column; gap:12px;">
         </div>
         <div style="margin-top:14px">
-          <button id="checkBtn" class="btn primary" onclick="doCheck()">Проверить</button>
-          <button id="nextBtn" class="btn primary" style="display:none" onclick="nextQuestion()">Следующий вопрос</button>
+          <button id="nextBtn" class="btn primary" style="display:none" onclick="nextRole()">Следующая роль</button>
         </div>
       </div>
       <div class="card">

@@ -18,6 +18,8 @@ from app.routers.uploads import router as uploads_router
 from app.routers.audio import router as audio_router
 from app.routers.status import router as status_router
 from app.routers.slides import router as slides_router
+from app.routers.text import router as text_router
+from app.routers.questions import router as questions_router
 
 
 app = FastAPI(title="PerfectPitch MVP API")
@@ -44,6 +46,8 @@ app.include_router(audio_router)
 app.include_router(process_router)
 app.include_router(status_router)
 app.include_router(slides_router)
+app.include_router(text_router)
+app.include_router(questions_router)
 
 
 if __name__ == "__main__":

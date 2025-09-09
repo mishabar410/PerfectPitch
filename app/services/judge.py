@@ -215,3 +215,129 @@ def review_script_quality(script_text: str) -> Dict[str, Any]:
         return json.loads(txt)
     except Exception:
         return {"issues": [], "suggestions": [], "overall": ""}
+
+
+def analyze_script_with_meta(script_text: str, meta: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Analyze the provided script text taking into account user's intent meta
+    (goal, audience, format, experience). Returns strictly structured JSON:
+    {"score_0_100": int, "recommendations": [str], "thesis": [str]}
+    """
+    goal = meta.get("goal") or meta.get("goal_other") or ""
+    audience = meta.get("audience") or ""
+    fmt = meta.get("format") or ""
+    experience = meta.get("experience") or ""
+    timing_min = meta.get("timing_min") or ""
+
+    system = (
+        "You are a senior Russian-speaking editor and public speaking coach. "
+        "Evaluate the script wrt user's goal, audience, format, and experience. "
+        "Return strictly valid JSON only."
+    )
+
+    meta_blob = {
+        "goal": goal,
+        "audience": audience,
+        "format": fmt,
+        "experience": experience,
+        "timing_min": timing_min,
+    }
+    user = (
+        "[META]\n" + json.dumps(meta_blob, ensure_ascii=False) +
+        "\n[SCRIPT]\n" + (script_text or "") +
+        "\n[INSTRUCTIONS]\n" 
+        "Assess quality and alignment. Score from 0 to 100 (integer). "
+        "Give 5–10 concise recommendations (Russian). "
+        "Optionally generate 3–7 thesis bullet points that would improve delivery. "
+        "Return JSON: {\"score_0_100\": int, \"recommendations\":[str], \"thesis\":[str]}"
+    )
+
+    resp = client.chat.completions.create(
+        model="gpt-4o-mini",
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        temperature=0,
+    )
+
+    txt = (resp.choices[0].message.content or "").strip()
+    try:
+        parsed = json.loads(txt)
+        # sanitize
+        score = parsed.get("score_0_100")
+        try:
+            score = int(score)
+        except Exception:
+            score = 0
+        score = max(0, min(100, score))
+        recs = [str(x) for x in (parsed.get("recommendations") or [])][:10]
+        thesis = [str(x) for x in (parsed.get("thesis") or [])][:10]
+        return {"score_0_100": score, "recommendations": recs, "thesis": thesis}
+    except Exception:
+        return {"score_0_100": 0, "recommendations": [], "thesis": []}
+
+
+def generate_objections_with_answers(transcript_text: str, meta: Dict[str, Any]) -> Dict[str, Any]:
+    """Generate role-based objections (3 per role) with model answers.
+
+    Returns JSON: {"roles":[{"actor": str, "objections":[{"prompt": str, "answer": str}]}]}
+    """
+    goal = meta.get("goal") or meta.get("goal_other") or ""
+    audience = meta.get("audience") or ""
+    fmt = meta.get("format") or ""
+    experience = meta.get("experience") or ""
+    timing_min = meta.get("timing_min") or ""
+
+    system = (
+        "You are a Russian-speaking role-play coach for objection handling. "
+        "Given the pitch transcript and meta context (goal, audience, format, experience), "
+        "produce three concise but challenging objections for each of three roles appropriate to the context, "
+        "and provide an ideal short answer for each objection. Output strictly valid JSON only."
+    )
+
+    meta_blob = {
+        "goal": goal,
+        "audience": audience,
+        "format": fmt,
+        "experience": experience,
+        "timing_min": timing_min,
+    }
+
+    user = (
+        "[META]\n" + json.dumps(meta_blob, ensure_ascii=False) +
+        "\n[TRANSCRIPT]\n" + (transcript_text or "") +
+        "\n[ROLES]\nReturn three roles relevant to the context (e.g., Инвестор, Техдиректор, Клиент)." 
+        " For each role, return exactly three objections and an ideal answer."
+        "\n[FORMAT]\n{\"roles\":[{\"actor\":str, \"objections\":[{\"prompt\":str, \"answer\":str}]}]}"
+    )
+
+    resp = client.chat.completions.create(
+        model="gpt-4o-mini",
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        temperature=0,
+    )
+
+    txt = (resp.choices[0].message.content or "").strip()
+    try:
+        parsed = json.loads(txt)
+        roles = parsed.get("roles") or []
+        out_roles: List[Dict[str, Any]] = []
+        for r in roles:
+            actor = str(r.get("actor", ""))
+            objs = []
+            for o in (r.get("objections") or [])[:3]:
+                prompt = str(o.get("prompt", ""))
+                answer = str(o.get("answer", ""))
+                if prompt:
+                    objs.append({"prompt": prompt, "answer": answer})
+            if actor and objs:
+                out_roles.append({"actor": actor, "objections": objs})
+        return {"roles": out_roles[:3]}
+    except Exception:
+        return {"roles": []}
