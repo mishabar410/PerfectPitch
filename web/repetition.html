@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PerfectPitch — Репетиция</title>
+  <style>
+    :root { --brand:#3340d9; --muted:#6b7280; }
+    body { font-family:-apple-system, system-ui, Segoe UI, Roboto, sans-serif; margin:0; background:#fff; }
+    .topbar { background:#3340d9; color:#fff; padding:16px 24px; font-size:24px; font-weight:800; text-align:center; margin-bottom:16px; }
+    .wrap { padding:24px; max-width:1180px; margin:0 auto; }
+    h1 { font-size:34px; margin:0 0 10px 0; }
+    .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+    .grid { display:grid; grid-template-columns:1.2fr .8fr; gap:24px; }
+    .card { border:1px solid #e5e7eb; border-radius:12px; padding:16px; background:#fff; }
+    .stage { border:1px solid #e5e7eb; border-radius:12px; padding:12px; min-height:360px; display:flex; justify-content:center; align-items:center; background:#fff; }
+    .stage img { max-width:100%; height:auto; border-radius:8px; border:1px solid #e5e7eb; }
+    .muted { color:#6b7280; }
+    .btn { cursor:pointer; padding:10px 14px; border-radius:10px; border:1px solid #cbd5e1; background:#fff; }
+    .btn.primary { background:#3340d9; color:#fff; border-color:#2a32b8; }
+    .footer { display:flex; justify-content:space-between; align-items:center; margin-top:14px; }
+    .timer { display:flex; align-items:center; gap:12px; }
+    .progress { height:10px; background:#e5e7eb; border-radius:999px; width:380px; position:relative; }
+    .progress > span { position:absolute; left:0; top:0; bottom:0; background:#8ba7ff; border-radius:999px; width:0%; }
+    .placeholder { background:#e5e7eb; border-radius:10px; height:240px; }
+    video.cam { width:100%; border-radius:12px; border:1px solid #e5e7eb; background:#000; max-height:240px; object-fit:cover; }
+  </style>
+  <script>
+    async function api(path, opts={}) { const r = await fetch(path, opts); if(!r.ok) throw new Error(await r.text()); try { return await r.json(); } catch(_) { return {}; } }
+    function getSID(){ const u=new URLSearchParams(location.search).get('sid'); if(u){localStorage.setItem('pp_sid',u);return u;} return localStorage.getItem('pp_sid'); }
+    async function ensureSID(){ let s=getSID(); if(!s){ const d=await api('/sessions',{method:'POST'}); s=d.session_id; localStorage.setItem('pp_sid',s);} document.getElementById('sid').textContent=s; return s; }
+
+    // Slides management (reused from slides.html)
+    let SLIDES=[], IMGS=[], IDX=0;
+    async function loadSlides(){ const sid=getSID(); try { const r=await api(`/slides/${sid}`); SLIDES=r.slides||[]; } catch(_) { SLIDES=[]; } try { const rr=await api(`/slides/${sid}/render`,{method:'POST'}); IMGS=rr.images||[]; } catch(_) { IMGS=[]; } IDX=0; renderSlide(); }
+    function renderSlide(){ const img=document.getElementById('img'); const txt=document.getElementById('txt'); const n=document.getElementById('num'); const s=SLIDES[IDX]; if(!s){ txt.textContent='Слайдов нет'; img.style.display='none'; n.textContent='—'; return;} if(IMGS[IDX]){ img.src=IMGS[IDX]; img.style.display='block'; txt.textContent=''; } else { img.style.display='none'; txt.textContent=(s.title||('Slide '+s.index)); } n.textContent=`${s.index} / ${SLIDES.length}`; }
+    function prev(){ if(!SLIDES.length) return; IDX=Math.max(0,IDX-1); renderSlide(); }
+    function next(){ if(!SLIDES.length) return; IDX=Math.min(SLIDES.length-1,IDX+1); renderSlide(); }
+
+    // Timer based on questions timing
+    function getTimingMinutes(){ try { const meta=JSON.parse(localStorage.getItem('pp_meta')||'{}'); return Number(meta.timing_min)||12; } catch(_) { return 12; } }
+    let timerTotal=0, timerStart=0, timerId=null;
+    function updateTimerUI(){ const elapsed = Math.floor((performance.now()-timerStart)/1000); const left=document.getElementById('t_elapsed'); const total=document.getElementById('t_total'); const pct=document.getElementById('t_fill'); left.textContent = String(Math.max(0,elapsed/60)).padStart(1,'0').split('.')[0]+":"+String(elapsed%60).padStart(2,'0'); total.textContent = (timerTotal<10?"0":"")+timerTotal+":00"; const perc=Math.min(100, (elapsed/(timerTotal*60))*100); pct.style.width=perc+"%"; }
+    function startTimer(){ timerTotal=getTimingMinutes(); timerStart=performance.now(); if(timerId) cancelAnimationFrame(timerId); const step=()=>{ updateTimerUI(); timerId=requestAnimationFrame(step); }; step(); }
+    function stopTimer(){ if(timerId) cancelAnimationFrame(timerId); }
+
+    // Camera and recording
+    let mediaStream=null, mediaRec=null;
+    async function openCamera(){ try { mediaStream = await navigator.mediaDevices.getUserMedia({ video:true, audio:false }); const v=document.getElementById('cam'); v.srcObject=mediaStream; v.play(); } catch(e) { console.error(e); } }
+    async function startRecording(){ const sid=await ensureSID(); if(!mediaStream){ await openCamera(); }
+      // audio only stream
+      const astream = await navigator.mediaDevices.getUserMedia({ audio:true });
+      mediaRec = new MediaRecorder(astream, { mimeType:'audio/webm;codecs=opus' });
+      mediaRec.ondataavailable = async (e)=>{ if(e.data && e.data.size>0){ const fd=new FormData(); fd.append('chunk', e.data, 'chunk.webm'); await fetch(`/audio/${sid}/chunk`,{method:'POST', body:fd}); } };
+      mediaRec.start(1000);
+      document.getElementById('startBtn').disabled=true; document.getElementById('stopBtn').disabled=false;
+      startTimer();
+    }
+    async function stopRecording(){ const sid=getSID(); if(!mediaRec) return; await new Promise(r=>{ mediaRec.onstop=r; mediaRec.stop(); }); await fetch(`/audio/${sid}/finalize`,{method:'POST'}); document.getElementById('startBtn').disabled=false; document.getElementById('stopBtn').disabled=true; stopTimer(); showStats(); }
+
+    function showStats(){ document.getElementById('stats').style.display='grid'; }
+
+    function goBack(){ const sid=getSID(); location.href='/ui/slides.html' + (sid?('?sid='+encodeURIComponent(sid)):''); }
+    function goNext(){ const sid=getSID(); location.href='/ui/response.html' + (sid?('?sid='+encodeURIComponent(sid)):''); }
+
+    document.addEventListener('DOMContentLoaded', async ()=>{ await ensureSID(); await loadSlides(); await openCamera(); document.getElementById('t_total').textContent=(getTimingMinutes()<10?"0":"")+getTimingMinutes()+":00"; });
+  </script>
+</head>
+<body>
+  <div class="topbar">PerfectPitch</div>
+  <div class="wrap">
+    <div class="row" style="justify-content:space-between;">
+      <h1>Репетиция</h1>
+      <div class="muted">4/5</div>
+    </div>
+
+    <div class="row timer" style="margin:8px 0 16px 0;">
+      <div class="muted" id="t_elapsed">00:00</div>
+      <div class="progress"><span id="t_fill"></span></div>
+      <div class="muted" id="t_total">12:00</div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="stage">
+          <img id="img" alt="slide" />
+          <div id="txt" class="muted"></div>
+        </div>
+        <div class="row" style="margin-top:10px; justify-content:center; gap:18px;">
+          <button class="btn" onclick="prev()">&lt;</button>
+          <span id="num" class="muted">—</span>
+          <button class="btn" onclick="next()">&gt;</button>
+        </div>
+      </div>
+      <div class="card">
+        <video id="cam" class="cam" autoplay muted playsinline></video>
+        <div class="row" style="margin-top:12px; justify-content:flex-start; gap:12px;">
+          <button id="startBtn" class="btn primary" onclick="startRecording()">Начать выступление</button>
+          <button id="stopBtn" class="btn" disabled onclick="stopRecording()">Закончить выступление</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Post-recording stats placeholder (image 2 layout) -->
+    <div id="stats" class="grid" style="display:none; margin-top:16px; grid-template-columns:1fr 1fr; gap:24px;">
+      <div class="card">
+        <div style="text-align:center; font-weight:600; margin-bottom:8px">Тепловая карта пауз по слайдам</div>
+        <div class="placeholder"></div>
+      </div>
+      <div class="card">
+        <div style="text-align:center; font-weight:600; margin-bottom:8px">Рекомендации</div>
+        <div class="placeholder" style="height:300px"></div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <button class="btn" onclick="goBack()">← Назад</button>
+      <div class="muted">session_id: <code id="sid">—</code></div>
+      <button class="btn primary" onclick="goNext()">Далее →</button>
+    </div>
+  </div>
+</body>
+</html>
+
+

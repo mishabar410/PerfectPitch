@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PerfectPitch — Возражения</title>
+  <style>
+    :root { --brand:#3340d9; --muted:#6b7280; }
+    body { font-family:-apple-system, system-ui, Segoe UI, Roboto, sans-serif; margin:0; }
+    .topbar { background:#3340d9; color:#fff; padding:16px 24px; font-size:24px; font-weight:800; text-align:center; margin-bottom:16px; }
+    .wrap { padding:24px; max-width:1180px; margin:0 auto; }
+    .row { display:flex; align-items:center; gap:12px; }
+    h1 { font-size:34px; margin:0 0 10px 0; }
+    .btn { cursor:pointer; padding:10px 14px; border-radius:10px; border:1px solid #cbd5e1; background:#fff; }
+    .btn.primary { background:#3340d9; color:#fff; border-color:#2a32b8; }
+    .muted { color:#6b7280; }
+    .card { border:1px solid #e5e7eb; border-radius:12px; padding:16px; background:#fff; }
+    .grid { display:grid; grid-template-columns:1.1fr .9fr; gap:24px; }
+    .opt { border:1px solid #cbd5e1; border-radius:10px; padding:12px; background:#fff; cursor:pointer; }
+    .opt.selected { outline:2px solid var(--brand); background:#eef2ff; }
+    .opt.good { background:#d1fadf; border-color:#7cd992; }
+    .opt.bad { background:#fecaca; border-color:#f87171; }
+    .opt.mid { background:#fef08a; border-color:#facc15; }
+    .right-note { border:1px solid #e5e7eb; border-radius:10px; padding:14px; }
+    .footer { display:flex; justify-content:space-between; align-items:center; margin-top:14px; }
+    .placeholder { background:#e5e7eb; border-radius:10px; height:260px; }
+  </style>
+  <script>
+    function getSID(){ const u=new URLSearchParams(location.search).get('sid'); if(u){localStorage.setItem('pp_sid',u);return u;} return localStorage.getItem('pp_sid'); }
+
+    // Data from API: {roles:[{actor, objections:[{prompt, answer}]}]}
+    let ROLES = [];
+    let roleIdx = 0;
+
+    async function loadFromAPI(){
+      const sid = getSID();
+      try {
+        const data = await fetch(`/questions/${sid}`).then(r=>{ if(!r.ok) throw new Error('fail'); return r.json(); });
+        ROLES = Array.isArray(data.roles) ? data.roles : [];
+      } catch(_) {
+        ROLES = [];
+      }
+    }
+
+    function renderRole(){
+      const r = ROLES[roleIdx];
+      const title = r ? r.actor : '—';
+      document.getElementById('q_title').textContent = title;
+      const box = document.getElementById('opts');
+      box.innerHTML = '';
+      if (r && Array.isArray(r.objections)) {
+        r.objections.forEach((obj, i)=>{
+          const div = document.createElement('div');
+          div.className = 'opt';
+          div.textContent = obj.prompt;
+          div.dataset.i = i;
+          div.addEventListener('click', ()=> selectObjection(i));
+          box.appendChild(div);
+        });
+      }
+      document.getElementById('note').textContent = '';
+      const nextBtn = document.getElementById('nextBtn');
+      if (nextBtn) nextBtn.style.display = (roleIdx + 1 < ROLES.length) ? 'inline-block' : 'none';
+      updateProgress();
+    }
+
+    function selectObjection(i){
+      [...document.querySelectorAll('.opt')].forEach(el=> el.classList.remove('selected'));
+      const el = document.querySelector(`.opt[data-i="${i}"]`);
+      if (el) el.classList.add('selected');
+      const r = ROLES[roleIdx];
+      const obj = r && r.objections ? r.objections[i] : null;
+      document.getElementById('note').textContent = obj ? obj.answer : '';
+    }
+
+    function nextRole(){
+      if (roleIdx + 1 < ROLES.length) {
+        roleIdx++; renderRole();
+      } else {
+        showSummary();
+      }
+    }
+
+    function showSummary(){
+      document.getElementById('quiz').style.display = 'none';
+      document.getElementById('summary').style.display = 'grid';
+      // placeholders already in layout; could fill stats text later
+    }
+
+    function updateProgress(){
+      const total = ROLES.length || 1;
+      document.getElementById('progress').textContent = `${Math.min(roleIdx+1,total)}/${total}`;
+    }
+
+    function goBack(){ const sid=getSID(); location.href='/ui/repetition.html' + (sid?('?sid='+encodeURIComponent(sid)):''); }
+    function finish(){ location.href = '/ui/'; }
+
+    document.addEventListener('DOMContentLoaded', async ()=>{ await loadFromAPI(); renderRole(); });
+  </script>
+</head>
+<body>
+  <div class="topbar">PerfectPitch</div>
+  <div class="wrap">
+    <div class="row" style="justify-content:space-between;">
+      <h1>Возражения</h1>
+      <div id="progress" class="muted">5/5</div>
+    </div>
+
+    <!-- Quiz state -->
+    <div id="quiz" class="grid">
+      <div class="card">
+        <div class="row" style="gap:10px; align-items:flex-start;">
+          <div style="font-size:26px">🤔</div>
+          <div id="q_title" style="font-weight:600">—</div>
+        </div>
+        <div id="opts" style="margin-top:12px; display:flex; flex-direction:column; gap:12px;">
+        </div>
+        <div style="margin-top:14px">
+          <button id="nextBtn" class="btn primary" style="display:none" onclick="nextRole()">Следующая роль</button>
+        </div>
+      </div>
+      <div class="card">
+        <div id="note" class="right-note"></div>
+      </div>
+    </div>
+
+    <!-- Summary state (after all questions) -->
+    <div id="summary" class="grid" style="display:none; grid-template-columns:1fr 1fr; gap:24px;">
+      <div class="card">
+        <div style="text-align:center; font-weight:600; margin-bottom:8px">Статистика</div>
+        <div class="placeholder"></div>
+      </div>
+      <div class="card">
+        <div style="text-align:center; font-weight:600; margin-bottom:8px">Советы</div>
+        <div class="placeholder" style="height:300px"></div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <button class="btn" onclick="goBack()">← Назад</button>
+      <div></div>
+      <button class="btn primary" onclick="finish()">Завершить →</button>
+    </div>
+  </div>
+</body>
+</html>
+
+
