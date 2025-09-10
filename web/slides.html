@@ -5,14 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PerfectPitch — Слайды</title>
   <style>
-    :root { --brand:#3340d9; --muted:#6b7280; }
+    :root { --brand:#3337BC; --muted:#6b7280; }
     body { font-family:-apple-system, system-ui, Segoe UI, Roboto, sans-serif; margin:0; }
-    .topbar { background:#3340d9; color:#fff; padding:16px 24px; font-size:24px; font-weight:800; text-align:center; margin-bottom:16px; }
+    .topbar { background:var(--brand); color:#fff; padding:16px 24px; font-size:24px; font-weight:800; text-align:center; margin-bottom:16px; }
     .wrap { padding:24px; max-width:1180px; margin:0 auto; }
     h1 { font-size:34px; margin:0 0 10px 0; }
     .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
-    .btn { cursor:pointer; padding:10px 14px; border-radius:10px; border:1px solid #cbd5e1; background:#fff; }
-    .btn.primary { background:#3340d9; color:#fff; border-color:#2a32b8; }
+    .btn { cursor:pointer; padding:12px 16px; border-radius:12px; border:1px solid #cbd5e1; background:#fff; display:flex; align-items:center; gap:10px; min-height:56px; font-size:15px; line-height:1.2; text-decoration:none; }
+    .btn.primary { background:var(--brand); color:#fff; border-color:var(--brand); font-weight:600; }
     .muted { color:#6b7280; }
     .stage { border:1px solid #e5e7eb; border-radius:12px; padding:12px; min-height:360px; display:flex; justify-content:center; align-items:center; background:#fff; }
     .stage img { max-width:100%; height:auto; border-radius:8px; border:1px solid #e5e7eb; }
@@ -46,7 +46,7 @@
   <div class="wrap">
     <div class="row" style="justify-content:space-between;">
       <h1>Анализ слайдов</h1>
-      <div class="muted">3/5</div>
+      <div class="progress-counter">3/5</div>
     </div>
 
     <!-- Start (initial) state -->
