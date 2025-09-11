@@ -203,7 +203,7 @@
     }
 
     async function saveAndNext() {
-      const sid = await ensureSession();
+      let sid = await ensureSession();
       const meta = readSelections();
       const hasDirection = !!meta.direction;
       const hasGoal = !!(meta.goal && meta.goal !== 'Другое') || !!(meta.goal_other);
@@ -220,7 +220,23 @@
       const blob = new Blob([JSON.stringify(meta)], { type: 'application/json' });
       const fd = new FormData();
       fd.append('file', blob, 'meta.json');
-      await api(`/uploads/${sid}`, { method: 'POST', body: fd });
+      // Try upload; if session missing (404), recreate session and retry once
+      let res = await fetch(`/uploads/${sid}`, { method: 'POST', body: fd });
+      if (res.status === 404) {
+        try {
+          const data = await api('/sessions', { method: 'POST' });
+          sid = data.session_id;
+          localStorage.setItem('pp_sid', sid);
+          const sidEl = document.getElementById('sid');
+          if (sidEl) sidEl.textContent = sid;
+        } catch (e) {
+          throw e;
+        }
+        res = await fetch(`/uploads/${sid}`, { method: 'POST', body: fd });
+      }
+      if (!res.ok) {
+        throw new Error(await res.text());
+      }
       // go to text page
       location.href = '/ui/text.html?sid=' + encodeURIComponent(sid);
     }
