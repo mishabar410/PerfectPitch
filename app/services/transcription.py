@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from .openai_client import client
+import logging
 
 
 def transcribe_audio(audio_path: Path, lang_hint: Optional[str] = None) -> str:
@@ -23,6 +24,7 @@ def transcribe_audio(audio_path: Path, lang_hint: Optional[str] = None) -> str:
             language=lang_hint or None,
             response_format="text",
         )
+    logging.getLogger(__name__).info("whisper_transcribed", extra={"path": str(audio_path), "lang_hint": lang_hint})
     return tr
 
 

@@ -10,6 +10,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, UploadFile, File, HTTPException
 
 from app.core.paths import UPLOADS_DIR
+import logging
 
 
 router = APIRouter()
@@ -25,6 +26,7 @@ async def upload_audio_chunk(session_id: str, chunk: UploadFile = File(...)) -> 
     data = await chunk.read()
     with open(path, "ab") as f:
         f.write(data)
+    logging.getLogger(__name__).info("audio_chunk", extra={"session_id": session_id, "bytes": len(data), "path": str(path)})
     return {"ok": True}
 
 
@@ -38,6 +40,7 @@ def finalize_audio(session_id: str) -> Dict[str, Any]:
     if not part.exists():
         raise HTTPException(status_code=400, detail="No chunks uploaded")
     part.rename(final)
+    logging.getLogger(__name__).info("audio_finalized", extra={"session_id": session_id, "audio": str(final)})
     return {"ok": True, "audio": f"uploads/{session_id}/audio.webm"}
 
 

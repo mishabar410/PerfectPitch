@@ -5,25 +5,107 @@ generate_feedback_and_questions aggregates deck-level advice and Q&A.
 """
 
 import json
+import logging
 import base64
 from pathlib import Path
 from typing import Any, Dict, List, Tuple, Optional
 
 from .openai_client import client
 import re
-from openai import OpenAI
 
 def slice_transcript_by_datajson(full_text: str, data_json: Dict[str, Any]) -> Dict[int, str]:
-    """Return mapping of slide index to transcript window (MVP heuristic)."""
+    """Return mapping of slide index to transcript window.
+
+    Heuristic: split the full transcript into word-based chunks proportionally to
+    slide durations from data.json (start_ms..end_ms). If timings are missing,
+    split evenly by number of slides.
+    """
+    slides = [s for s in (data_json.get("slides") or []) if s is not None]
+    if not slides:
+        return {}
+
+    # Tokenize transcript into words preserving simple whitespace separation
+    words = re.findall(r"\S+", full_text or "")
+    total_words = len(words)
+    if total_words == 0:
+        # Empty transcript → return empty windows for each slide
+        return {int(s.get("index")): "" for s in slides if s.get("index") is not None}
+
+    # Compute durations where available
+    durations: list[tuple[int, int]] = []  # (slide_index, duration_ms)
+    total_duration_ms = 0
+    for s in slides:
+        try:
+            idx = int(s.get("index"))
+        except Exception:
+            continue
+        try:
+            start_ms = s.get("start_ms")
+            end_ms = s.get("end_ms")
+            if start_ms is None or end_ms is None:
+                durations.append((idx, -1))
+                continue
+            dur = int(end_ms) - int(start_ms)
+            if dur <= 0:
+                durations.append((idx, -1))
+                continue
+            durations.append((idx, dur))
+            total_duration_ms += dur
+        except Exception:
+            durations.append((idx, -1))
+
+    # Decide allocation strategy
+    allocations: Dict[int, int] = {}
+    if total_duration_ms > 0 and any(d >= 0 for _, d in durations):
+        # Proportional allocation by duration
+        remaining_words = total_words
+        remaining_ms = total_duration_ms
+        for i, (idx, dur) in enumerate(durations):
+            if dur <= 0:
+                allocations[idx] = 0
+                continue
+            if i == len(durations) - 1:
+                # assign all remaining to last with valid duration
+                allocations[idx] = remaining_words
+            else:
+                w = round(total_words * (dur / total_duration_ms))
+                w = max(0, min(remaining_words, w))
+                allocations[idx] = w
+                remaining_words -= w
+                remaining_ms -= dur
+        # if some words remain due to rounding and last had invalid duration, append to last slide overall
+        if sum(allocations.values()) < total_words:
+            last_key = durations[-1][0] if durations else None
+            if last_key is not None:
+                allocations[last_key] = allocations.get(last_key, 0) + (total_words - sum(allocations.values()))
+    else:
+        # Even split across slides
+        n = max(1, len(durations))
+        base = total_words // n
+        rem = total_words % n
+        for i, (idx, _) in enumerate(durations):
+            allocations[idx] = base + (1 if i < rem else 0)
+
+    # Build text chunks in slide order (preserve given ordering)
     chunks: Dict[int, str] = {}
-    for sl in data_json.get("slides", []):
-        idx = int(sl.get("index"))
-        chunks[idx] = full_text
+    cursor = 0
+    for idx, _ in durations:
+        take = max(0, int(allocations.get(idx, 0)))
+        if take <= 0:
+            chunks[idx] = ""
+            continue
+        segment = words[cursor : cursor + take]
+        chunks[idx] = " ".join(segment)
+        cursor += take
+    # Any leftover words (due to rounding) go to the last slide
+    if cursor < total_words and durations:
+        last_idx = durations[-1][0]
+        leftover = words[cursor:]
+        chunks[last_idx] = (chunks.get(last_idx, "") + (" " if chunks.get(last_idx) else "") + " ".join(leftover)).strip()
     return chunks
 
 
 
-client = OpenAI()
 
 def judge_slides_batched(
     slides: List[Dict[str, Any]],
@@ -140,6 +222,7 @@ def generate_feedback_and_questions(
     except Exception:
         improvements = []
         qs = {"investor": [], "tech": [], "product": []}
+    logging.getLogger(__name__).info("judge_feedback_questions", extra={"improvements": len(improvements), "q_investor": len(qs.get("investor", [])), "q_tech": len(qs.get("tech", [])), "q_product": len(qs.get("product", []))})
 
     def _wrap_questions(lst: List[str]) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
@@ -228,27 +311,31 @@ def analyze_script_with_meta(script_text: str, meta: Dict[str, Any]) -> Dict[str
     fmt = meta.get("format") or ""
     experience = meta.get("experience") or ""
     timing_min = meta.get("timing_min") or ""
+    direction = meta.get("direction") or ""
+    notes = meta.get("notes") or ""
 
     system = (
         "You are a senior Russian-speaking editor and public speaking coach. "
-        "Evaluate the script wrt user's goal, audience, format, and experience. "
+        "Evaluate the script with respect to user's context (goal, direction, audience, format, experience, notes). "
         "Return strictly valid JSON only."
     )
 
     meta_blob = {
         "goal": goal,
+        "direction": direction,
         "audience": audience,
         "format": fmt,
         "experience": experience,
         "timing_min": timing_min,
+        "notes": notes,
     }
     user = (
         "[META]\n" + json.dumps(meta_blob, ensure_ascii=False) +
         "\n[SCRIPT]\n" + (script_text or "") +
-        "\n[INSTRUCTIONS]\n" 
+        "\n[INSTRUCTIONS]\n"
         "Assess quality and alignment. Score from 0 to 100 (integer). "
-        "Give 5–10 concise recommendations (Russian). "
-        "Optionally generate 3–7 thesis bullet points that would improve delivery. "
+        "Give 5–10 concise recommendations in Russian (short actionable sentences). "
+        "Generate 3–7 thesis bullet points in Russian (max 12 words each). "
         "Return JSON: {\"score_0_100\": int, \"recommendations\":[str], \"thesis\":[str]}"
     )
 
@@ -274,6 +361,7 @@ def analyze_script_with_meta(script_text: str, meta: Dict[str, Any]) -> Dict[str
         score = max(0, min(100, score))
         recs = [str(x) for x in (parsed.get("recommendations") or [])][:10]
         thesis = [str(x) for x in (parsed.get("thesis") or [])][:10]
+        logging.getLogger(__name__).info("analyze_script", extra={"score": score, "recs": len(recs), "thesis": len(thesis)})
         return {"score_0_100": score, "recommendations": recs, "thesis": thesis}
     except Exception:
         return {"score_0_100": 0, "recommendations": [], "thesis": []}
@@ -289,20 +377,24 @@ def generate_objections_with_answers(transcript_text: str, meta: Dict[str, Any])
     fmt = meta.get("format") or ""
     experience = meta.get("experience") or ""
     timing_min = meta.get("timing_min") or ""
+    direction = meta.get("direction") or ""
+    notes = meta.get("notes") or ""
 
     system = (
         "You are a Russian-speaking role-play coach for objection handling. "
-        "Given the pitch transcript and meta context (goal, audience, format, experience), "
+        "Given the pitch transcript and meta context (goal, direction, audience, format, experience, notes), "
         "produce three concise but challenging objections for each of three roles appropriate to the context, "
         "and provide an ideal short answer for each objection. Output strictly valid JSON only."
     )
 
     meta_blob = {
         "goal": goal,
+        "direction": direction,
         "audience": audience,
         "format": fmt,
         "experience": experience,
         "timing_min": timing_min,
+        "notes": notes,
     }
 
     user = (
@@ -338,6 +430,140 @@ def generate_objections_with_answers(transcript_text: str, meta: Dict[str, Any])
                     objs.append({"prompt": prompt, "answer": answer})
             if actor and objs:
                 out_roles.append({"actor": actor, "objections": objs})
+        logging.getLogger(__name__).info("objections_generated", extra={"roles": len(out_roles)})
         return {"roles": out_roles[:3]}
     except Exception:
         return {"roles": []}
+
+
+def review_deck_with_llm(
+    slides: List[Dict[str, Any]],
+    deck_metrics: Dict[str, Any],
+    meta: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Ask LLM to review slide deck quality and return concise recommendations.
+
+    Returns {"recommendations": [str]}
+    """
+    meta = meta or {}
+    # Compact slide content to keep prompt short
+    compact_slides: List[Dict[str, Any]] = []
+    for s in slides[:30]:
+        title = str(s.get("title", ""))
+        bullets = s.get("bullets") or []
+        bullets_joined = " \n- ".join([str(b)[:300] for b in bullets][:3])
+        compact_slides.append({
+            "index": s.get("index"),
+            "title": title[:120],
+            "bullets": bullets_joined[:600],
+        })
+
+    system = (
+        "Ты — строгий русскоязычный консультант по дизайну презентаций. "
+        "Кратко и по делу укажи, что улучшить: структура, визуал, плотность текста, читаемость, акценты. "
+        "Выдай строго валидный JSON."
+    )
+    payload = {
+        "meta": {
+            "goal": meta.get("goal") or meta.get("goal_other") or None,
+            "direction": meta.get("direction"),
+            "format": meta.get("format"),
+            "timing_min": meta.get("timing_min"),
+            "notes": meta.get("notes"),
+        },
+        "metrics": deck_metrics,
+        "slides": compact_slides,
+    }
+    user = (
+        "[КОНТЕКСТ]\n" + json.dumps(payload, ensure_ascii=False) +
+        "\n[ЗАДАНИЕ]\nСформулируй 7–12 конкретных рекомендаций по улучшению слайдов (одно предложение на пункт).\n"
+        "Не повторяйся. Учитывай контекст и метрики (плотность/контраст/шрифты/стилистика).\n"
+        "[ФОРМАТ ОТВЕТА]\n{\"recommendations\":[str]}"
+    )
+
+    resp = client.chat.completions.create(
+        model="gpt-4o-mini",
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        temperature=0,
+    )
+    txt = (resp.choices[0].message.content or "").strip()
+    try:
+        parsed = json.loads(txt)
+        recs = [str(x) for x in (parsed.get("recommendations") or [])][:12]
+    except Exception:
+        recs = []
+    logging.getLogger(__name__).info("deck_review", extra={"recs": len(recs)})
+    return {"recommendations": recs}
+
+
+def review_deck_per_slide(
+    slides: List[Dict[str, Any]],
+    deck_metrics: Dict[str, Any],
+    meta: Optional[Dict[str, Any]] = None,
+    max_slides: int = 30,
+) -> Dict[str, Any]:
+    """LLM review per slide: returns recommendations per slide and general deck tips.
+
+    Output: {"per_slide":[{"index":int, "recommendations":[str]}], "general":[str]}
+    """
+    meta = meta or {}
+    compact: List[Dict[str, Any]] = []
+    for s in slides[:max_slides]:
+        title = str(s.get("title", ""))
+        bullets = s.get("bullets") or []
+        text_joined = " \n- ".join([str(b)[:300] for b in bullets][:4])
+        compact.append({"index": s.get("index"), "title": title[:160], "content": text_joined[:800]})
+
+    system = (
+        "Ты — строгий русскоязычный консультант по слайдам. Для КАЖДОГО слайда оцени необходимость улучшений и дай до 3–5 кратких рекомендаций (по визуалу/структуре/тексту/акцентам). "
+        "Если слайд уже хороший и улучшения не требуются — верни ПУСТОЙ список рекомендаций для этого слайда. Не дублируй одни и те же советы на соседних слайдах. Верни строго JSON."
+    )
+    payload = {
+        "meta": {
+            "goal": meta.get("goal") or meta.get("goal_other") or None,
+            "direction": meta.get("direction"),
+            "format": meta.get("format"),
+            "timing_min": meta.get("timing_min"),
+            "notes": meta.get("notes"),
+        },
+        "metrics": deck_metrics,
+        "slides": compact,
+    }
+    user = (
+        "[КОНТЕКСТ]\n" + json.dumps(payload, ensure_ascii=False) +
+        "\n[ЗАДАНИЕ]\nДля каждого слайда верни ДО 3–5 пунктов, но если улучшения не требуются — верни пустой список. Затем добавь до 5 общих советов по всей колоде.\n"
+        "[ФОРМАТ]\n{\"per_slide\":[{\"index\":int, \"recommendations\":[str]}], \"general\":[str]}"
+    )
+    resp = client.chat.completions.create(
+        model="gpt-4o-mini",
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        temperature=0,
+    )
+    txt = (resp.choices[0].message.content or "").strip()
+    try:
+        parsed = json.loads(txt)
+        per_slide = parsed.get("per_slide") or []
+        general = parsed.get("general") or []
+        # sanitize
+        out = []
+        for item in per_slide:
+            try:
+                idx = int(item.get("index"))
+            except Exception:
+                continue
+            recs = [str(x) for x in (item.get("recommendations") or [])][:6]
+            out.append({"index": idx, "recommendations": recs})
+        general_s = [str(x) for x in general][:10]
+    except Exception:
+        out = []
+        general_s = []
+    logging.getLogger(__name__).info("deck_review_per_slide", extra={"slides": len(out), "general": len(general_s)})
+    return {"per_slide": out, "general": general_s}

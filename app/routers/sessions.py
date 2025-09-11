@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException
+import logging
 
 from app.core.paths import UPLOADS_DIR, ARTIFACTS_DIR
 
@@ -19,6 +20,7 @@ def create_session() -> Dict[str, Any]:
     folder = UPLOADS_DIR / session_id
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "meta.json").write_text(json.dumps({"session_id": session_id}, ensure_ascii=False), encoding="utf-8")
+    logging.getLogger(__name__).info("session_created", extra={"session_id": session_id, "folder": str(folder)})
     return {
         "session_id": session_id,
         "upload_urls": {
@@ -40,6 +42,7 @@ def delete_session(session_id: str) -> Dict[str, Any]:
         shutil.rmtree(folder)
     if art.exists():
         shutil.rmtree(art)
+    logging.getLogger(__name__).info("session_deleted", extra={"session_id": session_id})
     return {"ok": True}
 
 

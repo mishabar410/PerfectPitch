@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from app.core.paths import ARTIFACTS_DIR, UPLOADS_DIR
+import logging
 from app.services.pptx_parser import parse_pptx_metrics
 from app.services.transcription import transcribe_audio
 from app.services.judge import (
@@ -77,7 +78,9 @@ def _write_json(path: Path, obj: Any) -> None:
 
 def _pipeline(session_id: str, task_id: str) -> None:
     """Run end-to-end pipeline for a session: parse, asr, judge, assemble."""
+    lg = logging.getLogger(__name__)
     try:
+        lg.info("pipeline_start", extra={"session_id": session_id, "task_id": task_id})
         _set(task_id, state="RUNNING", stage="parse", progress_pct=5)
         folder = UPLOADS_DIR / session_id
         out_dir = ARTIFACTS_DIR / session_id
@@ -92,6 +95,7 @@ def _pipeline(session_id: str, task_id: str) -> None:
 
         slides_content, deck_metrics = parse_pptx_metrics(ppt_path)
         _write_json(out_dir / "slides.json", {"slides": slides_content, "metrics": deck_metrics})
+        lg.info("pptx_parsed", extra={"slides": len(slides_content)})
 
         # Render slide images for multimodal judging
         images_dir = out_dir / "slides"
@@ -100,6 +104,7 @@ def _pipeline(session_id: str, task_id: str) -> None:
             image_paths = render_pptx_to_images(ppt_path, images_dir)
         except Exception:
             image_paths = []
+        lg.info("pptx_render", extra={"images": len(image_paths)})
 
         _set(task_id, stage="asr", progress_pct=30)
         audio_path = _find_audio(folder)
@@ -107,6 +112,7 @@ def _pipeline(session_id: str, task_id: str) -> None:
             raise FileNotFoundError("Audio/Video not found")
         transcript = transcribe_audio(audio_path, lang_hint=data.get("lang_hint"))
         (out_dir / "transcript.txt").write_text(transcript, encoding="utf-8")
+        lg.info("asr_done", extra={"chars": len(transcript)})
 
         _set(task_id, stage="judge", progress_pct=60)
         per_slide_text = slice_transcript_by_datajson(transcript, data)
@@ -148,6 +154,7 @@ def _pipeline(session_id: str, task_id: str) -> None:
         weak_slides = sorted(list({*weak_by_density, *weak_by_fonts, *weak_by_similarity}))
 
         improvements, questions = generate_feedback_and_questions(weak_slides, deck_metrics, per_slide_results)
+        lg.info("judge_done", extra={"similarity_avg": similarity_avg, "weak_slides": weak_slides})
 
         # Optional: compare uploaded script (Word) to transcript and review script quality
         script_candidates = [folder / "word.docx", folder / "word.docm", folder / "script.docx", folder / "script.docm", folder / "word.doc"]
@@ -160,11 +167,13 @@ def _pipeline(session_id: str, task_id: str) -> None:
             if script_text:
                 script_eval = judge_script_vs_speech(script_text, transcript)
                 script_quality = review_script_quality(script_text)
+        lg.info("script_eval", extra={"present": script_path is not None})
         overall_score = round(similarity_avg * 100.0, 1)
 
         # Speech quality metrics
         _set(task_id, stage="speech_quality", progress_pct=92)
         speech_quality = compute_speech_quality(audio_path, transcript, data, per_slide_text)
+        lg.info("speech_quality", extra={"available": bool(speech_quality.get("available"))})
 
         _set(task_id, stage="assemble", progress_pct=95)
         report: Dict[str, Any] = {
@@ -187,8 +196,10 @@ def _pipeline(session_id: str, task_id: str) -> None:
         (out_dir / "questions.json").write_text(json.dumps(questions, ensure_ascii=False, indent=2), encoding="utf-8")
 
         _set(task_id, state="DONE", stage="assemble", progress_pct=100)
+        lg.info("pipeline_done", extra={"task_id": task_id})
     except Exception as e:
         _set(task_id, state="FAILED", error_code="PIPELINE_ERROR", error_message=str(e))
+        lg.exception("pipeline_failed", extra={"task_id": task_id})
 
 
 def start_process(session_id: str) -> str:
