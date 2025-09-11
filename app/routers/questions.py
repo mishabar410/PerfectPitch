@@ -37,6 +37,9 @@ def get_questions(session_id: str) -> Dict[str, Any]:
 
     transcript = _read_text(folder / "transcript.txt")
     if not transcript:
+        # fallback: pipeline writes transcript into artifacts/{sid}
+        transcript = _read_text((ARTIFACTS_DIR / session_id) / "transcript.txt")
+    if not transcript:
         raise HTTPException(status_code=400, detail="Transcript not found; record audio first.")
     meta = _load_json(folder / "meta.json")
 

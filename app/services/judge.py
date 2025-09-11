@@ -304,7 +304,7 @@ def analyze_script_with_meta(script_text: str, meta: Dict[str, Any]) -> Dict[str
     """
     Analyze the provided script text taking into account user's intent meta
     (goal, audience, format, experience). Returns strictly structured JSON:
-    {"score_0_100": int, "recommendations": [str], "thesis": [str]}
+    {"score_0_100": int, "recommendations": [{"text": str, "important": 0|1}], "thesis": [str]}
     """
     goal = meta.get("goal") or meta.get("goal_other") or ""
     audience = meta.get("audience") or ""
@@ -334,9 +334,10 @@ def analyze_script_with_meta(script_text: str, meta: Dict[str, Any]) -> Dict[str
         "\n[SCRIPT]\n" + (script_text or "") +
         "\n[INSTRUCTIONS]\n"
         "Assess quality and alignment. Score from 0 to 100 (integer). "
-        "Give 5–10 concise recommendations in Russian (short actionable sentences). "
+        "Give 5–10 concise recommendations in Russian (short actionable sentences), "
+        "and mark each recommendation with importance: 1 = highly important, 0 = important. "
         "Generate 3–7 thesis bullet points in Russian (max 12 words each). "
-        "Return JSON: {\"score_0_100\": int, \"recommendations\":[str], \"thesis\":[str]}"
+        "Return JSON: {\"score_0_100\": int, \"recommendations\":[{\"text\": str, \"important\": 0|1}], \"thesis\":[str]}"
     )
 
     resp = client.chat.completions.create(
@@ -359,10 +360,26 @@ def analyze_script_with_meta(script_text: str, meta: Dict[str, Any]) -> Dict[str
         except Exception:
             score = 0
         score = max(0, min(100, score))
-        recs = [str(x) for x in (parsed.get("recommendations") or [])][:10]
+
+        raw_recs = parsed.get("recommendations") or []
+        recs_out: List[Dict[str, Any]] = []
+        for item in raw_recs[:10]:
+            try:
+                text_val = str(item.get("text", "")).strip()
+                imp_val = item.get("important", 0)
+                try:
+                    imp_int = int(imp_val)
+                except Exception:
+                    imp_int = 0
+                imp_int = 1 if imp_int == 1 else 0
+                if text_val:
+                    recs_out.append({"text": text_val, "important": imp_int})
+            except Exception:
+                continue
+
         thesis = [str(x) for x in (parsed.get("thesis") or [])][:10]
-        logging.getLogger(__name__).info("analyze_script", extra={"score": score, "recs": len(recs), "thesis": len(thesis)})
-        return {"score_0_100": score, "recommendations": recs, "thesis": thesis}
+        logging.getLogger(__name__).info("analyze_script", extra={"score": score, "recs": len(recs_out), "thesis": len(thesis)})
+        return {"score_0_100": score, "recommendations": recs_out, "thesis": thesis}
     except Exception:
         return {"score_0_100": 0, "recommendations": [], "thesis": []}
 
