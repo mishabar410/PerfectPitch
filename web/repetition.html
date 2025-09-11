@@ -27,12 +27,12 @@
     .metric { border:1px solid #ffffff; border-radius:10px; padding:10px; background:#f8fafc; }
     /* Loading bar */
     .loading { display:none; margin:10px 0 6px 0; }
-    .loading .progress { height:6px; width:auto; }
+    .loading .progress { height:6px; width:100%; overflow:hidden; border-radius:999px; }
     .loading .bar { position:relative; display:block; height:6px; background:var(--brand); border-radius:999px; animation: indeterminate 1.2s infinite ease-in-out; left:-40%; width:40%; }
     @keyframes indeterminate { 0% { left:-40%; width:40%; } 50% { left:25%; width:50%; } 100% { left:100%; width:40%; } }
     /* Recommendations styling */
     ul.recs { margin:0; padding-left:18px; }
-    ul.recs li.rec { color:#0f5132; background:#d1e7dd; border:1px solid #badbcc; padding:8px 10px; border-radius:8px; margin:6px 0; }
+    ul.recs li.rec { color:#0f172a; background:transparent; border:none; padding:8px 10px; border-radius:0; margin:6px 0; }
   </style>
   <script>
     async function api(path, opts={}) { const r = await fetch(path, opts); if(!r.ok) throw new Error(await r.text()); try { return await r.json(); } catch(_) { return {}; } }
@@ -56,7 +56,7 @@
       left.textContent = (min<10?"0":"")+min+":"+(sec<10?"0":"")+sec;
       total.textContent = (timerTotal<10?"0":"")+timerTotal+":00";
       const perc=Math.min(100, (elapsed/(timerTotal*60))*100); pct.style.width=perc+"%";
-      if(isRecording && elapsed >= timerTotal*60){ stopRecording(true); }
+      if(isRecording && elapsed >= timerTotal*60){ isRecording=false; stopRecording(true); }
     }
     function startTimer(){
       timerTotal=getTimingMinutes();
@@ -65,10 +65,10 @@
       document.getElementById('t_elapsed').textContent='00:00';
       document.getElementById('t_fill').style.width='0%';
       if(timerId) cancelAnimationFrame(timerId);
-      const step=()=>{ updateTimerUI(); timerId=requestAnimationFrame(step); };
+      const step=()=>{ updateTimerUI(); if(isRecording){ timerId=requestAnimationFrame(step); } };
       step();
     }
-    function stopTimer(){ if(timerId) cancelAnimationFrame(timerId); }
+    function stopTimer(){ if(timerId) cancelAnimationFrame(timerId); timerId=null; }
 
     // Camera and recording
     let mediaStream=null, mediaRec=null;
@@ -92,7 +92,21 @@
         console.error(e);
       }
     }
-    async function stopRecording(auto=false){ const sid=getSID(); if(!mediaRec){ isRecording=false; stopTimer(); return; } await new Promise(r=>{ mediaRec.onstop=r; mediaRec.stop(); }); await fetch(`/audio/${sid}/finalize`,{method:'POST'}); const startBtn=document.getElementById('startBtn'); const stopBtn=document.getElementById('stopBtn'); startBtn.disabled=false; startBtn.classList.remove('disabled'); startBtn.classList.add('primary'); stopBtn.disabled=true; stopBtn.classList.remove('primary'); stopTimer(); isRecording=false; showStats(); try { const resp = await fetch(`/process/${sid}`, { method:'POST' }); const data = await resp.json().catch(()=>({})); if (resp.ok && data && data.task_id){ localStorage.setItem('pp_task', data.task_id); } } catch(_) {} }
+    async function stopRecording(auto=false){ const sid=getSID(); if(!mediaRec){ isRecording=false; stopTimer(); if(auto){ try { const resp = await fetch(`/process/${sid}`, { method:'POST' }); const data = await resp.json().catch(()=>({})); if (resp.ok && data && data.task_id){ localStorage.setItem('pp_task', data.task_id); } } catch(_) {} goNext(); } return; } await new Promise(r=>{ mediaRec.onstop=r; mediaRec.stop(); }); await fetch(`/audio/${sid}/finalize`,{method:'POST'}); const startBtn=document.getElementById('startBtn'); const stopBtn=document.getElementById('stopBtn'); startBtn.disabled=false; startBtn.classList.remove('disabled'); startBtn.classList.add('primary'); stopBtn.disabled=true; stopBtn.classList.remove('primary'); stopTimer(); isRecording=false; if(auto){ try { const resp = await fetch(`/process/${sid}`, { method:'POST' }); const data = await resp.json().catch(()=>({})); if (resp.ok && data && data.task_id){ localStorage.setItem('pp_task', data.task_id); } } catch(_) {} goNext(); return; } showStats(); try { const resp = await fetch(`/process/${sid}`, { method:'POST' }); const data = await resp.json().catch(()=>({})); if (resp.ok && data && data.task_id){ localStorage.setItem('pp_task', data.task_id); } } catch(_) {} }
+
+    function resetRepetition(){
+      try { localStorage.removeItem('pp_task'); } catch(_){ }
+      const stats=document.getElementById('stats'); if(stats) stats.style.display='none';
+      const startBtn=document.getElementById('startBtn'); const stopBtn=document.getElementById('stopBtn');
+      if(startBtn){ startBtn.disabled=false; startBtn.classList.remove('disabled'); startBtn.classList.add('primary'); }
+      if(stopBtn){ stopBtn.disabled=true; stopBtn.classList.remove('primary'); }
+      isRecording=false; stopTimer();
+      const elapsed=document.getElementById('t_elapsed'); const fill=document.getElementById('t_fill');
+      if(elapsed) elapsed.textContent='00:00';
+      if(fill) fill.style.width='0%';
+      try { const rb=document.getElementById('repeatBtn'); if (rb) rb.style.display='none'; } catch(_) {}
+      try { window.scrollTo({top:0, behavior:'smooth'}); } catch(_) {}
+    }
 
     function showLoading(msg){ const l=document.getElementById('loading'); const t=document.getElementById('loading_text'); if(t && msg) t.textContent=msg; if(l) l.style.display='block'; }
     function hideLoading(){ const l=document.getElementById('loading'); if(l) l.style.display='none'; }
@@ -139,6 +153,14 @@
           }
         } catch(_) {}
       } catch(_){ }
+      try {
+        const rb=document.getElementById('repeatBtn');
+        if (rb) {
+          const list = document.getElementById('deck_recs');
+          const hasRec = !!(list && list.querySelector('li.rec'));
+          rb.style.display = hasRec ? 'inline-flex' : 'none';
+        }
+      } catch(_) {}
       hideLoading();
     }
 
@@ -185,6 +207,7 @@
         <div class="row" style="margin-top:12px; justify-content:flex-start; gap:12px;">
           <button id="startBtn" class="btn primary" onclick="startRecording()">Начать выступление</button>
           <button id="stopBtn" class="btn" disabled onclick="stopRecording()">Закончить выступление</button>
+          <button id="repeatBtn" class="btn" style="display:none" onclick="resetRepetition()">↻ Повторить с рекомендациями</button>
         </div>
       </div>
     </div>

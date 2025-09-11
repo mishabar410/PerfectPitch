@@ -384,10 +384,22 @@ def analyze_script_with_meta(script_text: str, meta: Dict[str, Any]) -> Dict[str
         return {"score_0_100": 0, "recommendations": [], "thesis": []}
 
 
-def generate_objections_with_answers(transcript_text: str, meta: Dict[str, Any]) -> Dict[str, Any]:
-    """Generate role-based objections (3 per role) with model answers.
+def generate_objections_with_answers(
+    transcript_text: str,
+    meta: Dict[str, Any],
+    slides: Optional[List[Dict[str, Any]]] = None,
+    per_slide_text: Optional[Dict[int, str]] = None,
+    deck_metrics: Optional[Dict[str, Any]] = None,
+    per_slide_eval: Optional[List[Dict[str, Any]]] = None,
+    weak_slides: Optional[List[int]] = None,
+) -> Dict[str, Any]:
+    """Generate role-based objections tied to slides and spoken content.
 
-    Returns JSON: {"roles":[{"actor": str, "objections":[{"prompt": str, "answer": str}]}]}
+    Returns JSON: {
+      "roles": [
+        {"actor": str, "objections": [{"slide": int|null, "quote": str, "prompt": str, "answer": str}]}
+      ]
+    }
     """
     goal = meta.get("goal") or meta.get("goal_other") or ""
     audience = meta.get("audience") or ""
@@ -399,9 +411,10 @@ def generate_objections_with_answers(transcript_text: str, meta: Dict[str, Any])
 
     system = (
         "You are a Russian-speaking role-play coach for objection handling. "
-        "Given the pitch transcript and meta context (goal, direction, audience, format, experience, notes), "
-        "produce three concise but challenging objections for each of three roles appropriate to the context, "
-        "and provide an ideal short answer for each objection. Output strictly valid JSON only."
+        "Use provided slide info and spoken transcript windows to craft SPECIFIC objections. "
+        "For each role, generate exactly 3 concise but challenging objections grounded in the user's speech and slides. "
+        "Each objection SHOULD reference a slide number when applicable and include a short quote/paraphrase from the transcript as evidence. "
+        "Output strictly valid JSON only."
     )
 
     meta_blob = {
@@ -414,12 +427,47 @@ def generate_objections_with_answers(transcript_text: str, meta: Dict[str, Any])
         "notes": notes,
     }
 
+    # Compact slides for prompt
+    compact_slides: List[Dict[str, Any]] = []
+    for s in (slides or [])[:20]:
+        try:
+            compact_slides.append({
+                "index": s.get("index"),
+                "title": str(s.get("title", ""))[:140],
+                "bullets": (" ".join([str(b) for b in (s.get("bullets") or [])])[:260]) if s.get("bullets") else None,
+            })
+        except Exception:
+            continue
+    # Per-slide spoken windows (truncate to keep prompt short)
+    spoken: List[Dict[str, Any]] = []
+    if per_slide_text:
+        for idx in sorted(per_slide_text.keys()):
+            try:
+                t = str(per_slide_text[idx] or "").strip()
+                if t:
+                    # limit to ~100 words
+                    words = t.split()
+                    t_short = " ".join(words[:100])
+                    spoken.append({"index": idx, "spoken": t_short})
+            except Exception:
+                continue
+
+    payload = {
+        "meta": meta_blob,
+        "slides": compact_slides,
+        "spoken_by_slide": spoken,
+        "deck_metrics": deck_metrics or {},
+        "per_slide_eval": per_slide_eval or [],
+        "weak_slides": sorted(list(set(weak_slides or []))),
+    }
+
     user = (
-        "[META]\n" + json.dumps(meta_blob, ensure_ascii=False) +
-        "\n[TRANSCRIPT]\n" + (transcript_text or "") +
-        "\n[ROLES]\nReturn three roles relevant to the context (e.g., Инвестор, Техдиректор, Клиент)." 
-        " For each role, return exactly three objections and an ideal answer."
-        "\n[FORMAT]\n{\"roles\":[{\"actor\":str, \"objections\":[{\"prompt\":str, \"answer\":str}]}]}"
+        "[CONTEXT]\n" + json.dumps(payload, ensure_ascii=False) +
+        "\n[TASK]\nReturn three roles relevant to the context (e.g., Инвестор, Техдиректор, Клиент). "
+        "For EACH role, generate ONE specific, CHALLENGING question that targets the weaknesses (if any) grounded in slides and spoken content, and THREE answer options: "
+        "1 correct (grade=good), 1 partially correct (grade=mid), 1 incorrect (grade=bad). "
+        "Reference a slide number when applicable and provide a short supporting quote/paraphrase from the transcript. "
+        "\n[STRICT FORMAT]\n{\"roles\":[{\"actor\":str, \"question\":str, \"slide\": int|null, \"quote\": str, \"options\":[{\"text\":str, \"grade\":\"good|mid|bad\", \"explanation\":str}]}]}"
     )
 
     resp = client.chat.completions.create(
@@ -439,14 +487,23 @@ def generate_objections_with_answers(transcript_text: str, meta: Dict[str, Any])
         out_roles: List[Dict[str, Any]] = []
         for r in roles:
             actor = str(r.get("actor", ""))
-            objs = []
-            for o in (r.get("objections") or [])[:3]:
-                prompt = str(o.get("prompt", ""))
-                answer = str(o.get("answer", ""))
-                if prompt:
-                    objs.append({"prompt": prompt, "answer": answer})
-            if actor and objs:
-                out_roles.append({"actor": actor, "objections": objs})
+            question = str(r.get("question", ""))
+            slide_val = r.get("slide", None)
+            try:
+                slide_num = int(slide_val) if slide_val is not None else None
+            except Exception:
+                slide_num = None
+            quote = str(r.get("quote", "")).strip()
+            opts_raw = r.get("options") or []
+            options: List[Dict[str, Any]] = []
+            for o in opts_raw[:3]:
+                text = str(o.get("text", ""))
+                grade = str(o.get("grade", "")).lower()
+                explanation = str(o.get("explanation", ""))
+                if text and grade in {"good", "mid", "bad"}:
+                    options.append({"text": text, "grade": grade, "explanation": explanation})
+            if actor and question and options:
+                out_roles.append({"actor": actor, "question": question, "slide": slide_num, "quote": quote, "options": options})
         logging.getLogger(__name__).info("objections_generated", extra={"roles": len(out_roles)})
         return {"roles": out_roles[:3]}
     except Exception:
