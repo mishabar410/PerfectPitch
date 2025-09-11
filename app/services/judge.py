@@ -567,3 +567,76 @@ def review_deck_per_slide(
         general_s = []
     logging.getLogger(__name__).info("deck_review_per_slide", extra={"slides": len(out), "general": len(general_s)})
     return {"per_slide": out, "general": general_s}
+
+
+def generate_audience_questions_from_speech(
+    transcript_text: str,
+    speech_metrics: Optional[Dict[str, Any]] = None,
+    meta: Optional[Dict[str, Any]] = None,
+    max_questions_per_theme: int = 5,
+) -> Dict[str, Any]:
+    """Generate likely audience questions based on the spoken transcript and optional speech metrics.
+
+    Output JSON structure:
+    {
+      "themes": [
+        {"theme": str, "questions": [str]}
+      ],
+      "top_questions": [str]
+    }
+    """
+    meta = meta or {}
+    payload = {
+        "meta": {
+            "goal": meta.get("goal") or meta.get("goal_other"),
+            "direction": meta.get("direction"),
+            "audience": meta.get("audience"),
+            "format": meta.get("format"),
+            "timing_min": meta.get("timing_min"),
+            "notes": meta.get("notes"),
+        },
+        "speech_metrics": speech_metrics or {},
+    }
+
+    system = (
+        "Ты — русский модератор Q&A сессии после питча. По транскрипту выступления "
+        "и (если есть) метрикам речи предположи, какие вопросы задаст аудитория. "
+        "Сфокусируйся на неясностях, рисках, метриках, бизнес-модели, технологиях, рынке, планах. "
+        "Верни строго валидный JSON."
+    )
+
+    user = (
+        "[КОНТЕКСТ]\n" + json.dumps(payload, ensure_ascii=False) +
+        "\n[ТРАНСКРИПТ]\n" + (transcript_text or "") +
+        "\n[ЗАДАНИЕ]\nСгенерируй 3–6 тематических блока вопросов (theme), в каждом до "
+        f"{max_questions_per_theme} конкретных и естественно звучащих вопросов на русском. "
+        "Добавь список 5 самых вероятных вопросов (top_questions). "
+        "[ФОРМАТ]\n{\"themes\":[{\"theme\":str, \"questions\":[str]}], \"top_questions\":[str]}"
+    )
+
+    try:
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            temperature=0,
+        )
+        txt = (resp.choices[0].message.content or "").strip()
+        parsed = json.loads(txt)
+        themes = parsed.get("themes") or []
+        top_q = parsed.get("top_questions") or []
+        # sanitize
+        out_themes: List[Dict[str, Any]] = []
+        for th in themes[:6]:
+            theme_name = str(th.get("theme", "")).strip()
+            qs = [str(x).strip() for x in (th.get("questions") or []) if str(x).strip()][:max_questions_per_theme]
+            if theme_name and qs:
+                out_themes.append({"theme": theme_name[:80], "questions": qs})
+        top_q_s = [str(x).strip() for x in top_q if str(x).strip()][:5]
+        logging.getLogger(__name__).info("audience_questions_generated", extra={"themes": len(out_themes), "top": len(top_q_s)})
+        return {"themes": out_themes, "top_questions": top_q_s}
+    except Exception:
+        return {"themes": [], "top_questions": []}

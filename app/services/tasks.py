@@ -16,6 +16,7 @@ from app.services.judge import (
     generate_feedback_and_questions,
     judge_script_vs_speech,
     review_script_quality,
+    generate_audience_questions_from_speech,
 )
 from app.services.pptx_render import render_pptx_to_images
 from app.services.doc_parser import parse_word_script
@@ -192,6 +193,13 @@ def _pipeline(session_id: str, task_id: str) -> None:
         speech_quality = compute_speech_quality(audio_path, transcript, data, per_slide_text)
         lg.info("speech_quality", extra={"available": bool(speech_quality.get("available"))})
 
+        # Generate audience questions based on speech
+        audience_questions = generate_audience_questions_from_speech(
+            transcript_text=transcript,
+            speech_metrics=speech_quality,
+            meta=meta,
+        )
+
         _set(task_id, stage="assemble", progress_pct=95)
         report: Dict[str, Any] = {
             "uuid": session_id,
@@ -201,6 +209,7 @@ def _pipeline(session_id: str, task_id: str) -> None:
             "slides": {"per_slide": per_slide_results},
             "presentation_quality": deck_metrics,
             "questions": questions,
+            "audience_questions": audience_questions,
             "script": {
                 "present": script_path is not None,
                 "eval": script_eval,
