@@ -34,6 +34,27 @@
 
     async function loadFromAPI(){
       const sid = getSID();
+      // If a background task is known, poll its status until DONE/FAILED (with timeout)
+      let taskId = localStorage.getItem('pp_task');
+      if (!taskId) {
+        // Try to start a process if none is running
+        try {
+          const r = await fetch(`/process/${sid}`, { method:'POST' });
+          const d = await r.json().catch(()=>({}));
+          if (r.ok && d.task_id) { taskId = d.task_id; localStorage.setItem('pp_task', taskId); }
+        } catch(_) {}
+      }
+      if (taskId) {
+        const t0 = Date.now();
+        const limitMs = 120000; // 2min timeout
+        while (Date.now() - t0 < limitMs) {
+          try {
+            const s = await fetch(`/status/${taskId}`).then(r=>r.json());
+            if (s && (s.state === 'DONE' || s.state === 'FAILED')) break;
+          } catch(_) {}
+          await new Promise(r=>setTimeout(r, 1500));
+        }
+      }
       try {
         const data = await fetch(`/questions/${sid}`).then(r=>{ if(!r.ok) throw new Error('fail'); return r.json(); });
         ROLES = Array.isArray(data.roles) ? data.roles : [];

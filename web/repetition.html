@@ -25,6 +25,12 @@
     .progress > span { position:absolute; left:0; top:0; bottom:0; background:#8ba7ff; border-radius:999px; width:0%; }
     .placeholder { background:#e5e7eb; border-radius:10px; height:240px; }
     video.cam { width:100%; border-radius:12px; border:1px solid #e5e7eb; background:#000; max-height:240px; object-fit:cover; }
+    .metric { border:1px solid #e5e7eb; border-radius:10px; padding:10px; background:#f8fafc; }
+    /* Loading bar */
+    .loading { display:none; margin:10px 0 6px 0; }
+    .loading .progress { height:6px; width:auto; }
+    .loading .bar { position:relative; display:block; height:6px; background:var(--brand); border-radius:999px; animation: indeterminate 1.2s infinite ease-in-out; left:-40%; width:40%; }
+    @keyframes indeterminate { 0% { left:-40%; width:40%; } 50% { left:25%; width:50%; } 100% { left:100%; width:40%; } }
   </style>
   <script>
     async function api(path, opts={}) { const r = await fetch(path, opts); if(!r.ok) throw new Error(await r.text()); try { return await r.json(); } catch(_) { return {}; } }
@@ -85,9 +91,44 @@
         console.error(e);
       }
     }
-    async function stopRecording(auto=false){ const sid=getSID(); if(!mediaRec){ isRecording=false; stopTimer(); return; } await new Promise(r=>{ mediaRec.onstop=r; mediaRec.stop(); }); await fetch(`/audio/${sid}/finalize`,{method:'POST'}); const startBtn=document.getElementById('startBtn'); const stopBtn=document.getElementById('stopBtn'); startBtn.disabled=false; startBtn.classList.remove('disabled'); startBtn.classList.add('primary'); stopBtn.disabled=true; stopBtn.classList.remove('primary'); stopTimer(); isRecording=false; showStats(); }
+    async function stopRecording(auto=false){ const sid=getSID(); if(!mediaRec){ isRecording=false; stopTimer(); return; } await new Promise(r=>{ mediaRec.onstop=r; mediaRec.stop(); }); await fetch(`/audio/${sid}/finalize`,{method:'POST'}); const startBtn=document.getElementById('startBtn'); const stopBtn=document.getElementById('stopBtn'); startBtn.disabled=false; startBtn.classList.remove('disabled'); startBtn.classList.add('primary'); stopBtn.disabled=true; stopBtn.classList.remove('primary'); stopTimer(); isRecording=false; showStats(); try { const resp = await fetch(`/process/${sid}`, { method:'POST' }); const data = await resp.json().catch(()=>({})); if (resp.ok && data && data.task_id){ localStorage.setItem('pp_task', data.task_id); } } catch(_) {} }
 
-    function showStats(){ document.getElementById('stats').style.display='grid'; }
+    function showLoading(msg){ const l=document.getElementById('loading'); const t=document.getElementById('loading_text'); if(t && msg) t.textContent=msg; if(l) l.style.display='block'; }
+    function hideLoading(){ const l=document.getElementById('loading'); if(l) l.style.display='none'; }
+
+    async function showStats(){
+      document.getElementById('stats').style.display='grid';
+      const sid=getSID();
+      showLoading('Считаем метрики речи…');
+      // Wait for background task if present
+      const taskId = localStorage.getItem('pp_task');
+      if (taskId) {
+        const t0 = Date.now();
+        const limitMs = 120000;
+        while (Date.now() - t0 < limitMs) {
+          try {
+            const s = await fetch(`/status/${taskId}`).then(r=>r.json());
+            if (s && (s.state === 'DONE' || s.state === 'FAILED')) break;
+          } catch(_) {}
+          await new Promise(r=>setTimeout(r, 1200));
+        }
+      }
+      try {
+        const rep = await fetch(`/artifacts/${sid}/report.json`, { cache: 'no-store' }).then(r=>r.json());
+        const sp = rep && rep.speech_quality ? rep.speech_quality : null;
+        if (sp && sp.available){
+          const box = document.getElementById('speech_metrics');
+          if (box){
+            const pauses = sp.pauses||{};
+            box.innerHTML = `
+              <div class="metric"><strong>WPM</strong>: ${sp.wpm}</div>
+              <div class="metric" style="margin-top:6px"><strong>Паузы</strong>: count ${pauses.count||0}, avg ${pauses.avg_ms||0}мс, p90 ${pauses.p90_ms||0}мс</div>
+            `;
+          }
+        }
+      } catch(_){ }
+      hideLoading();
+    }
 
     function goBack(){ const sid=getSID(); location.href='/ui/slides.html' + (sid?('?sid='+encodeURIComponent(sid)):''); }
     function goNext(){ const sid=getSID(); location.href='/ui/response.html' + (sid?('?sid='+encodeURIComponent(sid)):''); }
@@ -110,6 +151,10 @@
     </div>
 
     <div class="grid">
+      <div id="loading" class="loading" style="grid-column: 1 / -1;">
+        <div class="progress"><span class="bar"></span></div>
+        <div class="muted" id="loading_text">Считаем метрики речи…</div>
+      </div>
       <div class="card">
         <div class="stage">
           <img id="img" alt="slide" />
@@ -134,8 +179,8 @@
     <!-- Post-recording stats placeholder (image 2 layout) -->
     <div id="stats" class="grid" style="display:none; margin-top:16px; grid-template-columns:1fr 1fr; gap:24px;">
       <div class="card">
-        <div style="text-align:center; font-weight:600; margin-bottom:8px">Тепловая карта пауз по слайдам</div>
-        <div class="placeholder"></div>
+        <div style="text-align:center; font-weight:600; margin-bottom:8px">Речь — ключевые метрики</div>
+        <div id="speech_metrics"></div>
       </div>
       <div class="card">
         <div style="text-align:center; font-weight:600; margin-bottom:8px">Рекомендации</div>

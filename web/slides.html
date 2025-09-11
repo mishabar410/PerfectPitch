@@ -21,19 +21,70 @@
     .drop { border:2px dashed #cbd5e1; border-radius:12px; height:240px; display:flex; align-items:center; justify-content:center; color:#9aa3af; }
     .right-box { border:1px solid #e5e7eb; border-radius:12px; padding:12px; min-height:360px; background:#f4f5f7; }
     .space-between { display:flex; justify-content:space-between; align-items:center; }
+    ul.recs { margin:0; padding-left:18px; }
+    ul.recs li.rec { color:#0f5132; background:#d1e7dd; border:1px solid #badbcc; padding:8px 10px; border-radius:8px; margin:6px 0; }
+    /* Loading bar */
+    .loading { display:none; margin:10px 0 6px 0; }
+    .progress { position:relative; height:6px; background:#e5e7eb; border-radius:999px; overflow:hidden; }
+    .progress .bar { position:absolute; left:-40%; top:0; bottom:0; width:40%; background:var(--brand); border-radius:999px; animation: indeterminate 1.2s infinite ease-in-out; }
+    @keyframes indeterminate { 0% { left:-40%; width:40%; } 50% { left:25%; width:50%; } 100% { left:100%; width:40%; } }
   </style>
   <script>
     async function api(path, opts={}) { const r = await fetch(path, opts); if(!r.ok) throw new Error(await r.text()); return r.json(); }
     function getSID(){ const u=new URLSearchParams(location.search).get('sid'); if(u){localStorage.setItem('pp_sid',u);return u;} return localStorage.getItem('pp_sid'); }
     async function ensureSID(){ let s=getSID(); if(!s){ const d=await api('/sessions',{method:'POST'}); s=d.session_id; localStorage.setItem('pp_sid',s);} document.getElementById('sid').textContent=s; return s; }
 
-    let SLIDES=[], IMGS=[], IDX=0;
+    let SLIDES=[], IMGS=[], IDX=0, METRICS=null;
     function resetStart(){ SLIDES=[]; IMGS=[]; IDX=0; document.getElementById('start').style.display='block'; document.getElementById('viewer').style.display='none'; document.getElementById('deck').value=''; }
 
-    async function uploadDeck(){ const sid=await ensureSID(); const f=document.getElementById('deck').files[0]; if(!f) return; const fd=new FormData(); fd.append('file', f, 'pptx.pptx'); await fetch(`/uploads/${sid}`,{method:'POST', body: fd}); await loadSlides(); await renderImages(); document.getElementById('start').style.display='none'; document.getElementById('viewer').style.display='block'; }
-    async function loadSlides(){ const sid=getSID(); const r=await api(`/slides/${sid}`); SLIDES=r.slides||[]; IDX=0; render(); }
+    function showLoading(msg){ const l=document.getElementById('loading'); const t=document.getElementById('loading_text'); if(t && msg) t.textContent=msg; if(l) l.style.display='block'; }
+    function hideLoading(){ const l=document.getElementById('loading'); if(l) l.style.display='none'; }
+
+    async function uploadDeck(){ const sid=await ensureSID(); const f=document.getElementById('deck').files[0]; if(!f) return; const fd=new FormData(); fd.append('file', f, 'pptx.pptx'); showLoading('Загружаем и рендерим слайды…'); await fetch(`/uploads/${sid}`,{method:'POST', body: fd}); try { await loadSlides(); await renderImages(); await requestReview(); } finally { hideLoading(); } document.getElementById('start').style.display='none'; document.getElementById('viewer').style.display='block'; }
+    async function loadSlides(){ const sid=getSID(); const r=await api(`/slides/${sid}`); SLIDES=r.slides||[]; METRICS=r.metrics||null; IDX=0; render(); renderMetrics(); }
     async function renderImages(){ const sid=getSID(); const r=await api(`/slides/${sid}/render`,{method:'POST'}); IMGS=r.images||[]; render(); }
-    function render(){ const img=document.getElementById('img'); const txt=document.getElementById('txt'); const n=document.getElementById('num'); const s=SLIDES[IDX]; if(!s){ txt.textContent='Слайдов нет'; img.style.display='none'; n.textContent='—'; return;} if(IMGS[IDX]){ img.src=IMGS[IDX]; img.style.display='block'; txt.textContent=''; } else { img.style.display='none'; txt.textContent=(s.title||('Slide '+s.index)); } n.textContent=`${s.index} / ${SLIDES.length}`; }
+    function render(){ const img=document.getElementById('img'); const txt=document.getElementById('txt'); const n=document.getElementById('num'); const s=SLIDES[IDX]; if(!s){ txt.textContent='Слайдов нет'; img.style.display='none'; n.textContent='—'; renderMetrics(); return;} if(IMGS[IDX]){ img.src=IMGS[IDX]; img.style.display='block'; txt.textContent=''; } else { img.style.display='none'; txt.textContent=(s.title||('Slide '+s.index)); } n.textContent=`${s.index} / ${SLIDES.length}`; renderMetrics(); }
+
+    async function requestReview(){ const sid=getSID(); try { const r = await api(`/slides/${sid}/review`, { method:'POST' }); window.DECK_REVIEW = r; } catch(_) { window.DECK_REVIEW = null; } renderMetrics(); }
+
+    function renderMetrics(){
+      const box = document.querySelector('.right-box');
+      if(!box){ return; }
+      try{
+        const rv = window.DECK_REVIEW;
+        const cur = SLIDES[IDX];
+        const curIndex = cur ? Number(cur.index) : null;
+        if (rv && Array.isArray(rv.per_slide) && curIndex!=null){
+          const item = rv.per_slide.find(x=>Number(x.index)===curIndex);
+          if (item){
+            const recs = (item.recommendations||[]).map(x=>`<li class="rec">${escapeHtml(String(x))}</li>`).join('');
+            box.innerHTML = `<div style=\"font-weight:700; margin-bottom:6px\">Рекомендации для слайда ${curIndex}</div><ul class=\"recs\">${recs||'<li class=\"muted\">—</li>'}</ul>`;
+            return;
+          }
+        }
+      } catch(_){ }
+      // fallback to metric-based heuristics
+      if(!METRICS){ box.innerHTML = '<div class="muted">Метрики недоступны</div>'; return; }
+      try{
+        const cur = SLIDES[IDX];
+        const curIndex = cur ? Number(cur.index) : null;
+        const densBad = METRICS.text_density?.bad_on || [];
+        const small = METRICS.small_fonts || [];
+        const contrast = METRICS.contrast_issues || [];
+        const style = METRICS.style_inconsistency || [];
+        const recs = [];
+        if (curIndex!=null){
+          if (densBad.includes(curIndex)) recs.push('Слайд перегружен текстом — сократите и упрощайте.');
+          if (small.includes(curIndex)) recs.push('Увеличьте минимальный кегль шрифта до 18pt+.');
+          if (contrast.includes(curIndex)) recs.push('Улучшите контраст текста и фона для читаемости.');
+          if (style.includes(curIndex)) recs.push('Приведите стили к единому виду (шрифт/размер).');
+        }
+        const items = recs.map(x=>`<li class="rec">${escapeHtml(String(x))}</li>`);
+        if(!items.length) items.push('<li class="muted">—</li>');
+        box.innerHTML = `<div style=\"font-weight:700; margin-bottom:6px\">Рекомендации для текущего слайда</div><ul class=\"recs\">${items.join('')}</ul>`;
+      } catch(_){ box.innerHTML = '<div class="muted">Метрики недоступны</div>'; }
+    }
+    function escapeHtml(s){ return (String(s||'')).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
     function prev(){ if(!SLIDES.length) return; IDX=Math.max(0,IDX-1); render(); }
     function next(){ if(!SLIDES.length) return; IDX=Math.min(SLIDES.length-1,IDX+1); render(); }
 
@@ -47,6 +98,11 @@
     <div class="row" style="justify-content:space-between;">
       <h1>Анализ слайдов</h1>
       <div class="progress-counter">3/5</div>
+    </div>
+
+    <div id="loading" class="loading">
+      <div class="progress"><span class="bar"></span></div>
+      <div class="muted" id="loading_text">Рендерим слайды…</div>
     </div>
 
     <!-- Start (initial) state -->

@@ -34,6 +34,11 @@
     .score svg { width:92px; height:92px; transform:rotate(-90deg); }
     .score .label { position:absolute; font-size:18px; font-weight:700; }
   </style>
+  <style>
+    /* Cosmetic color tweaks for recommendations and thesis */
+    #recs li.rec { color:#0f5132; background:#d1e7dd; border:1px solid #badbcc; padding:8px 10px; border-radius:8px; margin:6px 0; }
+    #thesis li.thesis { color:#1e3a8a; background:#dbeafe; border:1px solid #bfdbfe; padding:6px 10px; border-radius:8px; margin:6px 0; }
+  </style>
   <script>
     async function api(path, opts={}) {
       const res = await fetch(path, opts);
@@ -103,9 +108,9 @@
         const recs = Array.isArray(res.recommendations) ? res.recommendations : [];
         const thesis = Array.isArray(res.thesis) ? res.thesis : [];
         const rbox = document.getElementById('recs');
-        if (rbox) { rbox.innerHTML = recs.map(x=>`<li>${escapeHtml(String(x))}</li>`).join('') || '<li class="muted">—</li>'; }
+        if (rbox) { rbox.innerHTML = recs.map(x=>`<li class="rec">${escapeHtml(String(x))}</li>`).join('') || '<li class="muted">—</li>'; }
         const tbox = document.getElementById('thesis');
-        if (tbox) { tbox.innerHTML = thesis.map(x=>`<li>${escapeHtml(String(x))}</li>`).join('') || '<li class="muted">—</li>'; }
+        if (tbox) { tbox.innerHTML = thesis.map(x=>`<li class="thesis">${escapeHtml(String(x))}</li>`).join('') || '<li class="muted">—</li>'; }
       } catch (e) {
         try { console.error(e); } catch(_) {}
       }
