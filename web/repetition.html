@@ -31,6 +31,9 @@
     .loading .progress { height:6px; width:auto; }
     .loading .bar { position:relative; display:block; height:6px; background:var(--brand); border-radius:999px; animation: indeterminate 1.2s infinite ease-in-out; left:-40%; width:40%; }
     @keyframes indeterminate { 0% { left:-40%; width:40%; } 50% { left:25%; width:50%; } 100% { left:100%; width:40%; } }
+    /* Recommendations styling */
+    ul.recs { margin:0; padding-left:18px; }
+    ul.recs li.rec { color:#0f5132; background:#d1e7dd; border:1px solid #badbcc; padding:8px 10px; border-radius:8px; margin:6px 0; }
   </style>
   <script>
     async function api(path, opts={}) { const r = await fetch(path, opts); if(!r.ok) throw new Error(await r.text()); try { return await r.json(); } catch(_) { return {}; } }
@@ -126,9 +129,22 @@
             `;
           }
         }
+        // Load deck recommendations from feedback.md
+        try {
+          const resp = await fetch(`/artifacts/${sid}/feedback.md`, { cache: 'no-store' });
+          if (resp.ok) {
+            const text = await resp.text();
+            const lines = text.split(/\r?\n/).map(s=>s.trim()).filter(s=>s.startsWith('-'));
+            const html = lines.map(s=>`<li class="rec">${escapeHtml(s.replace(/^[-\s]+/, ''))}</li>`).join('') || '<li class="muted">—</li>';
+            const list = document.getElementById('deck_recs');
+            if (list) list.innerHTML = html;
+          }
+        } catch(_) {}
       } catch(_){ }
       hideLoading();
     }
+
+    function escapeHtml(s){ return (String(s||'')).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
 
     function goBack(){ const sid=getSID(); location.href='/ui/slides.html' + (sid?('?sid='+encodeURIComponent(sid)):''); }
     function goNext(){ const sid=getSID(); location.href='/ui/response.html' + (sid?('?sid='+encodeURIComponent(sid)):''); }
@@ -184,7 +200,7 @@
       </div>
       <div class="card">
         <div style="text-align:center; font-weight:600; margin-bottom:8px">Рекомендации</div>
-        <div class="placeholder" style="height:300px"></div>
+        <ul id="deck_recs" class="recs"></ul>
       </div>
     </div>
 
