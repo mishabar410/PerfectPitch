@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PerfectPitch — Репетиция</title>
   <style>
-    :root { --brand:#3340d9; --muted:#6b7280; }
+    :root { --brand:#3337BC; --muted:#6b7280; }
     body { font-family:-apple-system, system-ui, Segoe UI, Roboto, sans-serif; margin:0; background:#fff; }
-    .topbar { background:#3340d9; color:#fff; padding:16px 24px; font-size:24px; font-weight:800; text-align:center; margin-bottom:16px; }
+    .topbar { background:var(--brand); color:#fff; padding:16px 24px; font-size:24px; font-weight:800; text-align:center; margin-bottom:16px; }
     .wrap { padding:24px; max-width:1180px; margin:0 auto; }
     h1 { font-size:34px; margin:0 0 10px 0; }
     .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
@@ -16,9 +16,10 @@
     .stage { border:1px solid #e5e7eb; border-radius:12px; padding:12px; min-height:360px; display:flex; justify-content:center; align-items:center; background:#fff; }
     .stage img { max-width:100%; height:auto; border-radius:8px; border:1px solid #e5e7eb; }
     .muted { color:#6b7280; }
-    .btn { cursor:pointer; padding:10px 14px; border-radius:10px; border:1px solid #cbd5e1; background:#fff; }
-    .btn.primary { background:#3340d9; color:#fff; border-color:#2a32b8; }
+    .btn { cursor:pointer; padding:12px 16px; border-radius:12px; border:1px solid #cbd5e1; background:#fff; display:flex; align-items:center; gap:10px; min-height:56px; font-size:15px; line-height:1.2; text-decoration:none; }
+    .btn.primary { background:var(--brand); color:#fff; border-color:var(--brand); font-weight:600; }
     .footer { display:flex; justify-content:space-between; align-items:center; margin-top:14px; }
+    .btn.disabled { background:#eef2ff; color:#6b7280; border-color:#cbd5e1; cursor:not-allowed; }
     .timer { display:flex; align-items:center; gap:12px; }
     .progress { height:10px; background:#e5e7eb; border-radius:999px; width:380px; position:relative; }
     .progress > span { position:absolute; left:0; top:0; bottom:0; background:#8ba7ff; border-radius:999px; width:0%; }
@@ -39,24 +40,52 @@
 
     // Timer based on questions timing
     function getTimingMinutes(){ try { const meta=JSON.parse(localStorage.getItem('pp_meta')||'{}'); return Number(meta.timing_min)||12; } catch(_) { return 12; } }
-    let timerTotal=0, timerStart=0, timerId=null;
-    function updateTimerUI(){ const elapsed = Math.floor((performance.now()-timerStart)/1000); const left=document.getElementById('t_elapsed'); const total=document.getElementById('t_total'); const pct=document.getElementById('t_fill'); left.textContent = String(Math.max(0,elapsed/60)).padStart(1,'0').split('.')[0]+":"+String(elapsed%60).padStart(2,'0'); total.textContent = (timerTotal<10?"0":"")+timerTotal+":00"; const perc=Math.min(100, (elapsed/(timerTotal*60))*100); pct.style.width=perc+"%"; }
-    function startTimer(){ timerTotal=getTimingMinutes(); timerStart=performance.now(); if(timerId) cancelAnimationFrame(timerId); const step=()=>{ updateTimerUI(); timerId=requestAnimationFrame(step); }; step(); }
+    let timerTotal=0, timerStart=0, timerId=null, isRecording=false;
+    function updateTimerUI(){
+      const elapsed = Math.floor((performance.now()-timerStart)/1000);
+      const left=document.getElementById('t_elapsed'); const total=document.getElementById('t_total'); const pct=document.getElementById('t_fill');
+      const min=Math.floor(elapsed/60); const sec=elapsed%60;
+      left.textContent = (min<10?"0":"")+min+":"+(sec<10?"0":"")+sec;
+      total.textContent = (timerTotal<10?"0":"")+timerTotal+":00";
+      const perc=Math.min(100, (elapsed/(timerTotal*60))*100); pct.style.width=perc+"%";
+      if(isRecording && elapsed >= timerTotal*60){ stopRecording(true); }
+    }
+    function startTimer(){
+      timerTotal=getTimingMinutes();
+      timerStart=performance.now();
+      // reset UI values
+      document.getElementById('t_elapsed').textContent='00:00';
+      document.getElementById('t_fill').style.width='0%';
+      if(timerId) cancelAnimationFrame(timerId);
+      const step=()=>{ updateTimerUI(); timerId=requestAnimationFrame(step); };
+      step();
+    }
     function stopTimer(){ if(timerId) cancelAnimationFrame(timerId); }
 
     // Camera and recording
     let mediaStream=null, mediaRec=null;
     async function openCamera(){ try { mediaStream = await navigator.mediaDevices.getUserMedia({ video:true, audio:false }); const v=document.getElementById('cam'); v.srcObject=mediaStream; v.play(); } catch(e) { console.error(e); } }
-    async function startRecording(){ const sid=await ensureSID(); if(!mediaStream){ await openCamera(); }
-      // audio only stream
-      const astream = await navigator.mediaDevices.getUserMedia({ audio:true });
-      mediaRec = new MediaRecorder(astream, { mimeType:'audio/webm;codecs=opus' });
-      mediaRec.ondataavailable = async (e)=>{ if(e.data && e.data.size>0){ const fd=new FormData(); fd.append('chunk', e.data, 'chunk.webm'); await fetch(`/audio/${sid}/chunk`,{method:'POST', body:fd}); } };
-      mediaRec.start(1000);
-      document.getElementById('startBtn').disabled=true; document.getElementById('stopBtn').disabled=false;
+    async function startRecording(){
+      const sid=await ensureSID();
+      if(!mediaStream){ await openCamera(); }
+      // Immediately update UI and start timer so user sees progress even if mic permission is delayed
+      const startBtn=document.getElementById('startBtn'); const stopBtn=document.getElementById('stopBtn');
+      startBtn.disabled=true; startBtn.classList.add('disabled'); startBtn.classList.remove('primary');
+      stopBtn.disabled=false; stopBtn.classList.add('primary');
+      isRecording=true;
       startTimer();
+
+      // Try to start microphone recording; ignore errors to keep flow working visually
+      try {
+        const astream = await navigator.mediaDevices.getUserMedia({ audio:true });
+        mediaRec = new MediaRecorder(astream, { mimeType:'audio/webm;codecs=opus' });
+        mediaRec.ondataavailable = async (e)=>{ if(e.data && e.data.size>0){ const fd=new FormData(); fd.append('chunk', e.data, 'chunk.webm'); await fetch(`/audio/${sid}/chunk`,{method:'POST', body:fd}); } };
+        mediaRec.start(1000);
+      } catch (e) {
+        console.error(e);
+      }
     }
-    async function stopRecording(){ const sid=getSID(); if(!mediaRec) return; await new Promise(r=>{ mediaRec.onstop=r; mediaRec.stop(); }); await fetch(`/audio/${sid}/finalize`,{method:'POST'}); document.getElementById('startBtn').disabled=false; document.getElementById('stopBtn').disabled=true; stopTimer(); showStats(); }
+    async function stopRecording(auto=false){ const sid=getSID(); if(!mediaRec){ isRecording=false; stopTimer(); return; } await new Promise(r=>{ mediaRec.onstop=r; mediaRec.stop(); }); await fetch(`/audio/${sid}/finalize`,{method:'POST'}); const startBtn=document.getElementById('startBtn'); const stopBtn=document.getElementById('stopBtn'); startBtn.disabled=false; startBtn.classList.remove('disabled'); startBtn.classList.add('primary'); stopBtn.disabled=true; stopBtn.classList.remove('primary'); stopTimer(); isRecording=false; showStats(); }
 
     function showStats(){ document.getElementById('stats').style.display='grid'; }
 
@@ -71,7 +100,7 @@
   <div class="wrap">
     <div class="row" style="justify-content:space-between;">
       <h1>Репетиция</h1>
-      <div class="muted">4/5</div>
+      <div class="progress-counter">4/5</div>
     </div>
 
     <div class="row timer" style="margin:8px 0 16px 0;">
@@ -85,6 +114,7 @@
         <div class="stage">
           <img id="img" alt="slide" />
           <div id="txt" class="muted"></div>
+          
         </div>
         <div class="row" style="margin-top:10px; justify-content:center; gap:18px;">
           <button class="btn" onclick="prev()">&lt;</button>

@@ -46,7 +46,11 @@ def render_slides(session_id: str) -> Dict[str, Any]:
     if ppt is None:
         raise HTTPException(status_code=400, detail="Presentation not found")
     out_dir = ARTIFACTS_DIR / session_id / "slides"
-    paths: List[Path] = render_pptx_to_images(ppt, out_dir)
+    try:
+        paths: List[Path] = render_pptx_to_images(ppt, out_dir)
+    except RuntimeError as e:
+        # LibreOffice or conversion not available; degrade gracefully to text-only slides
+        return {"images": [], "count": 0, "warning": str(e)}
     urls = [f"/artifacts/{session_id}/slides/{p.name}" for p in paths]
     return {"images": urls, "count": len(urls)}
 

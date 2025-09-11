@@ -5,21 +5,65 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PerfectPitch — Настройка профиля</title>
   <style>
-    :root { --brand:#3340d9; --text:#0f172a; --muted:#475569; }
+    :root { --brand:#3337BC; --text:#0f172a; --muted:#475569; }
     body { font-family:-apple-system, system-ui, Segoe UI, Roboto, sans-serif; margin:0; color:var(--text); }
-    .topbar { background:#3340d9; color:#fff; padding:16px 24px; font-size:22px; font-weight:700; text-align:center; margin-bottom:16px; }
+    .topbar { background:var(--brand); color:#fff; padding:16px 24px; font-size:22px; font-weight:700; text-align:center; margin-bottom:16px; }
     .container { max-width:920px; margin:0 auto; padding:24px; }
     h1 { font-size:28px; margin:0 0 8px 0; }
-    .card { border:1px solid #e5e7eb; border-radius:12px; padding:18px; margin:16px 0; }
+    .card { border:1px solid #ffffff; border-radius:12px; padding:18px; margin:16px 0; }
     .row { display:flex; flex-wrap:wrap; gap:10px; margin:8px 0; }
-    .btn { cursor:pointer; padding:8px 12px; border-radius:10px; border:1px solid #cbd5e1; background:#fff; }
-    .btn.primary { background:var(--brand); color:#fff; border-color:#2a32b8; }
-    .btn.selected { outline:2px solid var(--brand); background:#eef2ff; }
+    .btn { cursor:pointer; padding:12px 16px; border-radius:12px; border:1px solid #cbd5e1; background:#fff; display:flex; align-items:center; gap:10px; min-height:56px; font-size:15px; line-height:1.2; text-decoration:none; }
+    .btn.primary { background:var(--brand); color:#fff; border-color:var(--brand); }
+    .btn.selected { background:#3337BC; color:#fff; border-color:#3337BC; }
     .muted { color:var(--muted); font-size:12px; }
-    input[type=text] { width:100%; padding:8px 10px; border-radius:10px; border:1px solid #cbd5e1; }
+    input[type=text] { width:100%; min-height:56px; padding:10px 20px; border-radius:10px; border:1px solid #cbd5e1; }
     .footer { display:flex; justify-content:space-between; align-items:center; margin-top:16px; }
+    /* Larger buttons suitable for icons */
+    .btn.lg { padding:16px 20px; font-size:16px; min-height:72px; display:flex; align-items:center; gap:12px; }
+    .btn.lg .icon { width:32px; height:32px; object-fit:contain; }
+    .btn .icon { width:28px; height:28px; object-fit:contain; }
+    .title { display:flex; align-items:center; gap:8px; }
+    .title .title-icon { width:18px; height:18px; }
+    .title strong { font-size:20px; font-weight:700; }
+    .footer .btn, .footer .btn.primary { font-size:16px; font-weight:600; }
+    /* Extra spacing between section titles and the first buttons row */
+    .card .title { margin-bottom: 16px; }
+    .card .title + .row { margin-top: 16px; }
+    /* Summary styling */
+    .summary { margin-top:30px; color:var(--text); font-size:16px; }
+    .summary strong { font-weight:700; }
   </style>
   <script>
+    const GOAL_OPTIONS = {
+      "Продажи и переговоры": [
+        "B2B-продажи (личная встреча)",
+        "B2C-продажи (розница, услуги)",
+        "Переговоры с клиентами",
+        "Презентация продукта",
+      ],
+      "Карьера и собеседования": [
+        "Собеседование на работу",
+        "Performance review (оценка эффективности)",
+        "Переговоры о повышении/зарплате",
+        "Фриланс-переговоры",
+      ],
+      "Стартапы и инвестирование": [
+        "Презентация инвесторам (5–10 мин)",
+        "Питч на конкурсах",
+        "Встреча с венчурными фондами",
+        "Демо продукта для партнеров",
+      ],
+      "Учеба и наука": [
+        "Защита диплома/курсовой",
+        "Выступление на конференции",
+        "Научный доклад",
+        "Учебный проект",
+      ],
+    };
+    function escapeHtml(s) {
+      return (String(s||'')).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
+    }
+
     function getSID() {
       const urlSid = new URLSearchParams(location.search).get('sid');
       if (urlSid) { localStorage.setItem('pp_sid', urlSid); return urlSid; }
@@ -50,6 +94,18 @@
         if (b.dataset.value === value) b.classList.add('selected');
         else b.classList.remove('selected');
       });
+      if (group === 'direction') updateDirectionIcons();
+    }
+
+    function updateDirectionIcons(){
+      document.querySelectorAll('[data-group="direction"]').forEach(btn=>{
+        const img = btn.querySelector('img.icon');
+        if(!img) return;
+        const def = img.getAttribute('data-default');
+        const sel = img.getAttribute('data-selected');
+        if(btn.classList.contains('selected') && sel){ img.src = sel; }
+        else if(def){ img.src = def; }
+      });
     }
 
     function readSelections() {
@@ -57,36 +113,40 @@
         const el = document.querySelector(`[data-group="${group}"].selected`);
         return el ? el.dataset.value : null;
       };
+      const selectedDirection = get('direction');
       const selectedGoal = get('goal');
       const otherVal = (document.getElementById('goal_other').value || '').trim();
       return {
+        direction: selectedDirection,
         goal: selectedGoal,
-        goal_other: selectedGoal === 'Другое' ? (otherVal || null) : null,
-        audience: get('audience'),
+        goal_other: (selectedGoal === 'Другое' || selectedDirection === 'Другое') ? (otherVal || null) : null,
         format: get('format'),
-        experience: get('experience'),
+        notes: (document.getElementById('extra_notes')?.value || '').trim() || null,
         timing_min: Number(document.getElementById('timing').value),
       };
     }
 
     function restoreSelections(meta) {
       if (!meta) return;
+      if (meta.direction) toggleSelect('direction', String(meta.direction));
+      renderGoals();
       if (meta.goal === 'Другое') toggleSelect('goal', 'Другое');
       else if (meta.goal) toggleSelect('goal', String(meta.goal));
-      if (meta.audience) toggleSelect('audience', String(meta.audience));
       if (meta.format) toggleSelect('format', String(meta.format));
-      if (meta.experience) toggleSelect('experience', String(meta.experience));
       if (meta.timing_min) document.getElementById('timing').value = Number(meta.timing_min);
       if (meta.goal_other) document.getElementById('goal_other').value = meta.goal_other;
+      if (meta.notes) { const n = document.getElementById('extra_notes'); if (n) n.value = meta.notes; }
       updateGoalOtherVisibility();
+      updateVisibility();
       renderSummary();
     }
 
     function updateGoalOtherVisibility() {
       const sel = document.querySelector('[data-group="goal"].selected');
+      const dirSel = document.querySelector('[data-group="direction"].selected');
       const wrap = document.getElementById('goal_other_wrap');
       if (!wrap) return;
-      if (sel && sel.dataset.value === 'Другое') {
+      if ((sel && sel.dataset.value === 'Другое') || (dirSel && dirSel.dataset.value === 'Другое')) {
         wrap.style.display = 'block';
       } else {
         wrap.style.display = 'none';
@@ -95,19 +155,64 @@
 
     function renderSummary() {
       const m = readSelections();
-      const parts = [];
-      if (m.timing_min) parts.push(`${m.timing_min}-минутный`);
-      if (m.format) parts.push(m.format + '-питч');
-      if (m.audience) parts.push(`для ${m.audience}`);
-      if (m.experience) parts.push(`Уровень — ${m.experience}`);
-      const goalText = m.goal === 'Другое' ? (m.goal_other || '') : (m.goal || '');
-      if (goalText) parts.push(`Цель — ${goalText.toLowerCase()}.`);
-      document.getElementById('summary').textContent = parts.length ? ('Вы готовите ' + parts.join('.')) : '';
+      const s1Timing = m.timing_min ? `<strong>${m.timing_min}-минутный</strong>` : '';
+      const s1Format = m.format ? `<strong>${escapeHtml(m.format)} питч</strong>` : '';
+      const s1Core = (s1Timing && s1Format) ? `${s1Timing} ${s1Format}` : (s1Timing || s1Format);
+
+      const s1 = s1Core ? `Вы готовите ${s1Core}.` : '';
+      const s2 = '';
+
+      // Build goal line
+      const goalParts = [];
+      const dir = m.direction;
+      if (dir && dir !== 'Другое') goalParts.push(`<strong>${escapeHtml(dir)}</strong>`);
+      const goalIsOther = (m.goal === 'Другое') || (!m.goal && dir === 'Другое');
+      const goalDisplay = goalIsOther ? escapeHtml(m.goal_other || '') : escapeHtml(m.goal || '');
+      if (goalDisplay) goalParts.push(`<strong>${goalDisplay}</strong>`);
+      const s3 = goalParts.length ? ` Цель — ${goalParts.join(', ')}` : '';
+
+      document.getElementById('summary').innerHTML = `${s1}${s2}${s3}`.trim();
+    }
+
+    function renderGoals() {
+      const box = document.getElementById('goal_buttons');
+      if (!box) return;
+      // clear previous
+      box.innerHTML = '';
+      // clear previous selection
+      document.querySelectorAll('[data-group="goal"]').forEach(b => b.classList.remove('selected'));
+      const dirEl = document.querySelector('[data-group="direction"].selected');
+      const direction = dirEl ? dirEl.dataset.value : null;
+      const otherWrap = document.getElementById('goal_other_wrap');
+      if (!direction || direction === 'Другое') {
+        // no buttons, show only free text field
+        if (otherWrap) otherWrap.style.display = 'block';
+        return;
+      }
+      if (otherWrap) otherWrap.style.display = 'none';
+      const opts = GOAL_OPTIONS[direction] || [];
+      opts.forEach(label => {
+        const btn = document.createElement('button');
+        btn.className = 'btn';
+        btn.dataset.group = 'goal';
+        btn.dataset.value = label;
+        btn.textContent = label;
+        btn.addEventListener('click', onSelect);
+        box.appendChild(btn);
+      });
     }
 
     async function saveAndNext() {
       const sid = await ensureSession();
       const meta = readSelections();
+      const hasDirection = !!meta.direction;
+      const hasGoal = !!(meta.goal && meta.goal !== 'Другое') || !!(meta.goal_other);
+      const hasFormat = !!meta.format;
+      const hasTiming = !!meta.timing_min && !Number.isNaN(meta.timing_min);
+      if (!(hasDirection && hasGoal && hasFormat && hasTiming)) {
+        alert('Заполните все вопросы!');
+        return;
+      }
       // persist to localStorage for reuse
       localStorage.setItem('pp_meta', JSON.stringify(meta));
 
@@ -128,82 +233,117 @@
         if (btn.dataset.value === 'Другое') {
           try { document.getElementById('goal_other').focus(); } catch(_) {}
         }
+      } else if (btn.dataset.group === 'direction') {
+        renderGoals();
+        updateGoalOtherVisibility();
       }
+      updateVisibility();
       renderSummary();
+    }
+
+    function isSelected(group){ return !!document.querySelector(`[data-group="${group}"].selected`); }
+
+    function isGoalComplete(){
+      const dirEl = document.querySelector('[data-group="direction"].selected');
+      const direction = dirEl ? dirEl.dataset.value : null;
+      const goalEl = document.querySelector('[data-group="goal"].selected');
+      const goal = goalEl ? goalEl.dataset.value : null;
+      const otherVal = (document.getElementById('goal_other')?.value || '').trim();
+      if (direction === 'Другое') return !!otherVal;
+      if (goal === 'Другое') return !!otherVal;
+      return !!goal;
+    }
+
+    function updateVisibility(){
+      const dirDone = isSelected('direction');
+      const goalDone = isGoalComplete();
+      const goalCard = document.getElementById('card-goal');
+      const notesCard = document.getElementById('card-notes');
+      const formatCard = document.getElementById('card-format');
+      const timingCard = document.getElementById('card-timing');
+      if (goalCard) goalCard.style.display = dirDone ? 'block' : 'none';
+      if (notesCard) notesCard.style.display = dirDone ? 'block' : 'none';
+      if (formatCard) formatCard.style.display = goalDone ? 'block' : 'none';
+      if (timingCard) timingCard.style.display = goalDone ? 'block' : 'none';
     }
 
     document.addEventListener('DOMContentLoaded', async () => {
       document.querySelectorAll('[data-group]').forEach(b => b.addEventListener('click', onSelect));
-      document.getElementById('goal_other').addEventListener('input', renderSummary);
+      document.getElementById('goal_other').addEventListener('input', ()=>{ updateGoalOtherVisibility(); updateVisibility(); renderSummary(); });
       document.getElementById('timing').addEventListener('input', renderSummary);
       const sid = await ensureSession();
       // load previous meta from localStorage if any
       try { restoreSelections(JSON.parse(localStorage.getItem('pp_meta') || 'null')); } catch(_) {}
+      renderGoals();
       updateGoalOtherVisibility();
+      updateDirectionIcons();
+      updateVisibility();
     });
   </script>
 </head>
 <body>
   <div class="topbar">PerfectPitch</div>
   <div class="container">
-    <h1>Настройка профиля</h1>
+    <div class="row" style="justify-content:space-between;">
+      <h1>Настройка профиля</h1>
+      <div class="progress-counter">1/5</div>
+    </div>
     <div class="muted">session_id: <code id="sid">—</code></div>
 
     <div class="card">
-      <div><strong>Цель презентации</strong></div>
+      <div class="title"><img class="title-icon" src="/ui/icons/direction.svg" alt="" /> <strong>Направление</strong></div>
       <div class="row">
-        <button class="btn selected" data-group="goal" data-value="Продать">Продать</button>
-        <button class="btn" data-group="goal" data-value="Проинформировать">Проинформировать</button>
-        <button class="btn" data-group="goal" data-value="Убедить">Убедить</button>
-        <button class="btn" data-group="goal" data-value="Другое">Другое</button>
+        <button class="btn" data-group="direction" data-value="Продажи и переговоры"><img class="icon" data-default="/ui/icons/sales.svg" data-selected="/ui/icons/sales_chosen.svg" src="/ui/icons/sales.svg" alt="" />Продажи и переговоры</button>
+        <button class="btn" data-group="direction" data-value="Карьера и собеседования"><img class="icon" data-default="/ui/icons/career.svg" data-selected="/ui/icons/career_chosen.svg" src="/ui/icons/career.svg" alt="" />Карьера и собеседования</button>
       </div>
+      <div class="row">
+        <button class="btn" data-group="direction" data-value="Стартапы и инвестирование"><img class="icon" data-default="/ui/icons/startup.svg" data-selected="/ui/icons/startup_chosen.svg" src="/ui/icons/startup.svg" alt="" />Стартапы и инвестирование</button>
+        <button class="btn" data-group="direction" data-value="Учеба и наука"><img class="icon" data-default="/ui/icons/education.svg" data-selected="/ui/icons/education_chosen.svg" src="/ui/icons/education.svg" alt="" />Учеба и наука</button>
+      </div>
+      <div class="row">
+        <button class="btn" data-group="direction" data-value="Другое"><img class="icon" data-default="/ui/icons/other.svg" data-selected="/ui/icons/other_chosen.svg" src="/ui/icons/other.svg" alt="" />Другое</button>
+      </div>
+    </div>
+
+    <div id="card-goal" class="card" style="display:none;">
+      <div class="title"><img class="title-icon" src="/ui/icons/goal.svg" alt="" /> <strong>Цель</strong></div>
+      <div id="goal_buttons" class="row"></div>
       <div id="goal_other_wrap" style="display:none; margin-top:8px;">
         <input type="text" id="goal_other" placeholder="Введите вашу цель" />
       </div>
     </div>
 
-    <div class="card">
-      <div><strong>Аудитория</strong></div>
+    <div id="card-notes" class="card" style="display:none;">
+      <div class="title"><img class="title-icon" src="/ui/icons/other.svg" alt="" /> <strong>Что еще нужно учесть? Укажите боли, пожелания или вопросы для отработки</strong></div>
       <div class="row">
-        <button class="btn" data-group="audience" data-value="B2B (1–3 человека)">B2B (1–3 человека)</button>
-        <button class="btn selected" data-group="audience" data-value="B2B (группа)">B2B (группа)</button>
-      </div>
-      <div class="row">
-        <button class="btn" data-group="audience" data-value="B2C (индивидуальный клиент)">B2C (индивидуальный клиент)</button>
-        <button class="btn" data-group="audience" data-value="B2C (массовая аудитория)">B2C (массовая аудитория)</button>
+        <input type="text" id="extra_notes" placeholder="(необязательно)" />
       </div>
     </div>
 
-    <div class="card">
-      <div><strong>Формат</strong></div>
+    
+
+    <div id="card-format" class="card" style="display:none;">
+      <div class="title"><img class="title-icon" src="/ui/icons/format.svg" alt="" /> <strong>Формат выступления</strong></div>
       <div class="row">
-        <button class="btn selected" data-group="format" data-value="онлайн">Онлайн</button>
-        <button class="btn" data-group="format" data-value="офлайн">Офлайн</button>
-        <button class="btn" data-group="format" data-value="гибрид">Гибрид</button>
+        <button class="btn selected" data-group="format" data-value="Онлайн (Zoom, Teams)">Онлайн (Zoom, Teams)</button>
+        <button class="btn" data-group="format" data-value="Офлайн (личная встреча)">Офлайн (личная встреча)</button>
+        <button class="btn" data-group="format" data-value="Гибридный">Гибридный</button>
       </div>
     </div>
 
-    <div class="card">
-      <div><strong>Опыт</strong></div>
-      <div class="row">
-        <button class="btn" data-group="experience" data-value="новичок">Новичок</button>
-        <button class="btn" data-group="experience" data-value="средний">Средний</button>
-        <button class="btn selected" data-group="experience" data-value="профессионал">Профессионал</button>
-      </div>
-    </div>
 
-    <div class="card">
-      <div><strong>Тайминг</strong></div>
+    <div id="card-timing" class="card" style="display:none;">
+      <div class="title"><img class="title-icon" src="/ui/icons/timing.svg" alt="" /> <strong>Тайминг</strong></div>
       <div class="row" style="align-items:center; gap:16px;">
-        <span class="muted">5 мин</span>
-        <input type="range" id="timing" min="5" max="30" step="1" value="15" />
+        <span class="muted">3 мин</span>
+        <input type="range" id="timing" min="3" max="30" step="1" value="15" />
         <span class="muted">30 мин</span>
       </div>
-      <div id="summary" class="muted" style="margin-top:10px"></div>
+      <div id="summary" class="summary"></div>
     </div>
 
     <div class="footer">
-      <a class="btn" href="/ui/">← На главную</a>
+      <a class="btn" href="/ui/" style="border:1px solid #ffffff; background:#fff;">← На главную</a>
       <button class="btn primary" onclick="saveAndNext()">Далее →</button>
     </div>
   </div>
