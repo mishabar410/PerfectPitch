@@ -12,7 +12,7 @@
     h1 { font-size:34px; margin:0 0 10px 0; }
     .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
     .grid { display:grid; grid-template-columns:1.2fr .8fr; gap:24px; }
-    .card { border:1px solid #e5e7eb; border-radius:12px; padding:16px; background:#fff; }
+    .card { border:1px solid #ffffff; border-radius:12px; padding:16px; background:#fff; }
     .stage { border:1px solid #e5e7eb; border-radius:12px; padding:12px; min-height:360px; display:flex; justify-content:center; align-items:center; background:#fff; }
     .stage img { max-width:100%; height:auto; border-radius:8px; border:1px solid #e5e7eb; }
     .muted { color:#6b7280; }
@@ -24,8 +24,7 @@
     .progress { height:10px; background:#e5e7eb; border-radius:999px; width:380px; position:relative; }
     .progress > span { position:absolute; left:0; top:0; bottom:0; background:#8ba7ff; border-radius:999px; width:0%; }
     .placeholder { background:#e5e7eb; border-radius:10px; height:240px; }
-    video.cam { width:100%; border-radius:12px; border:1px solid #e5e7eb; background:#000; max-height:240px; object-fit:cover; }
-    .metric { border:1px solid #e5e7eb; border-radius:10px; padding:10px; background:#f8fafc; }
+    .metric { border:1px solid #ffffff; border-radius:10px; padding:10px; background:#f8fafc; }
     /* Loading bar */
     .loading { display:none; margin:10px 0 6px 0; }
     .loading .progress { height:6px; width:auto; }
@@ -73,10 +72,9 @@
 
     // Camera and recording
     let mediaStream=null, mediaRec=null;
-    async function openCamera(){ try { mediaStream = await navigator.mediaDevices.getUserMedia({ video:true, audio:false }); const v=document.getElementById('cam'); v.srcObject=mediaStream; v.play(); } catch(e) { console.error(e); } }
     async function startRecording(){
       const sid=await ensureSID();
-      if(!mediaStream){ await openCamera(); }
+      // Camera removed from layout
       // Immediately update UI and start timer so user sees progress even if mic permission is delayed
       const startBtn=document.getElementById('startBtn'); const stopBtn=document.getElementById('stopBtn');
       startBtn.disabled=true; startBtn.classList.add('disabled'); startBtn.classList.remove('primary');
@@ -149,7 +147,7 @@
     function goBack(){ const sid=getSID(); location.href='/ui/slides.html' + (sid?('?sid='+encodeURIComponent(sid)):''); }
     function goNext(){ const sid=getSID(); location.href='/ui/response.html' + (sid?('?sid='+encodeURIComponent(sid)):''); }
 
-    document.addEventListener('DOMContentLoaded', async ()=>{ await ensureSID(); await loadSlides(); await openCamera(); document.getElementById('t_total').textContent=(getTimingMinutes()<10?"0":"")+getTimingMinutes()+":00"; });
+    document.addEventListener('DOMContentLoaded', async ()=>{ await ensureSID(); await loadSlides(); document.getElementById('t_total').textContent=(getTimingMinutes()<10?"0":"")+getTimingMinutes()+":00"; });
   </script>
 </head>
 <body>
@@ -184,7 +182,6 @@
         </div>
       </div>
       <div class="card">
-        <video id="cam" class="cam" autoplay muted playsinline></video>
         <div class="row" style="margin-top:12px; justify-content:flex-start; gap:12px;">
           <button id="startBtn" class="btn primary" onclick="startRecording()">Начать выступление</button>
           <button id="stopBtn" class="btn" disabled onclick="stopRecording()">Закончить выступление</button>

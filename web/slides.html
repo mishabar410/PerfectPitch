@@ -22,7 +22,7 @@
     .right-box { border:1px solid #e5e7eb; border-radius:12px; padding:12px; min-height:360px; background:#ffffff; }
     .space-between { display:flex; justify-content:space-between; align-items:center; }
     ul.recs { margin:0; padding-left:18px; }
-    ul.recs li.rec { color:#0f5132; background:#d1e7dd; border:1px solid #badbcc; padding:10px 12px; border-radius:8px; margin:12px 0; }
+    ul.recs li.rec { color:#0f172a; background:transparent; border:none; padding:10px 12px; border-radius:0; margin:12px 0; }
     /* Loading bar */
     .loading { display:none; margin:10px 0 6px 0; }
     .progress { position:relative; height:6px; background:#e5e7eb; border-radius:999px; overflow:hidden; }
@@ -36,12 +36,15 @@
     async function ensureSID(){ let s=getSID(); if(!s){ const d=await api('/sessions',{method:'POST'}); s=d.session_id; localStorage.setItem('pp_sid',s);} document.getElementById('sid').textContent=s; return s; }
 
     let SLIDES=[], IMGS=[], IDX=0, METRICS=null;
+    let PRE_UPLOAD = { done:false, name:null };
     function resetStart(){
       SLIDES=[]; IMGS=[]; IDX=0; METRICS=null;
       const num=document.getElementById('num'); if(num) num.textContent='—';
       const img=document.getElementById('img'); if(img){ img.src=''; img.style.display='none'; }
       const txt=document.getElementById('txt'); if(txt){ txt.textContent='Слайдов нет'; }
       const inp=document.getElementById('deck'); if(inp){ inp.value=''; }
+      const us=document.getElementById('upload_status'); if(us){ us.textContent=''; }
+      PRE_UPLOAD={done:false, name:null};
       const leftStart=document.getElementById('left-start');
       const leftSlides=document.getElementById('left-slides');
       const right=document.getElementById('right-card');
@@ -61,16 +64,18 @@
       const fd=new FormData(); fd.append('file', f, 'pptx.pptx');
       showLoading('Загружаем и рендерим слайды…');
       try {
-        const res = await fetch(`/uploads/${sid}`, { method:'POST', body: fd });
-        if (res.status === 404) {
-          localStorage.removeItem('pp_sid');
-          const d = await api('/sessions', { method:'POST' });
-          sid = d.session_id;
-          localStorage.setItem('pp_sid', sid);
-          const retry = await fetch(`/uploads/${sid}`, { method:'POST', body: fd });
-          if (!retry.ok) throw new Error(await retry.text());
-        } else if (!res.ok) {
-          throw new Error(await res.text());
+        if (!(PRE_UPLOAD.done && PRE_UPLOAD.name === f.name)) {
+          const res = await fetch(`/uploads/${sid}`, { method:'POST', body: fd });
+          if (res.status === 404) {
+            localStorage.removeItem('pp_sid');
+            const d = await api('/sessions', { method:'POST' });
+            sid = d.session_id;
+            localStorage.setItem('pp_sid', sid);
+            const retry = await fetch(`/uploads/${sid}`, { method:'POST', body: fd });
+            if (!retry.ok) throw new Error(await retry.text());
+          } else if (!res.ok) {
+            throw new Error(await res.text());
+          }
         }
         await loadSlides();
         await renderImages();
@@ -83,6 +88,37 @@
         if(right) right.classList.remove('hidden');
       } catch (e) {
         alert('Ошибка загрузки презентации: ' + (e?.message || e));
+      } finally {
+        hideLoading();
+      }
+    }
+
+    async function onDeckSelected(){
+      const fileEl=document.getElementById('deck');
+      const f=fileEl && fileEl.files[0];
+      const us=document.getElementById('upload_status');
+      if(!f){ if(us) us.textContent=''; PRE_UPLOAD={done:false, name:null}; return; }
+      let sid = await ensureSID();
+      const fd=new FormData(); fd.append('file', f, 'pptx.pptx');
+      try {
+        showLoading('Загружаем презентацию…');
+        const res = await fetch(`/uploads/${sid}`, { method:'POST', body: fd });
+        if (res.status === 404) {
+          localStorage.removeItem('pp_sid');
+          const d = await api('/sessions', { method:'POST' });
+          sid = d.session_id;
+          localStorage.setItem('pp_sid', sid);
+          const retry = await fetch(`/uploads/${sid}`, { method:'POST', body: fd });
+          if (!retry.ok) throw new Error(await retry.text());
+        } else if (!res.ok) {
+          throw new Error(await res.text());
+        }
+        PRE_UPLOAD = { done:true, name:f.name };
+        if(us) us.textContent = `«${f.name}» был загружен`;
+      } catch(e){
+        PRE_UPLOAD = { done:false, name:null };
+        if(us) us.textContent = '';
+        alert('Ошибка загрузки файла: ' + (e?.message || e));
       } finally {
         hideLoading();
       }
@@ -163,16 +199,17 @@
     <div id="viewer" class="grid" style="display:grid">
       <div>
         <!-- Left column: upload before, slides after -->
-        <div id="left-start" class="card">
+        <div id="left-start" class="card" style="border-color: #ffffff;">
           <div class="row" style="margin-bottom:12px; color:#111827; font-weight:500;">Загрузите презентацию в формате .pptx</div>
           <label class="drop" for="deck">Перетащите файл сюда или выберите</label>
           <input id="deck" type="file" accept=".pptx,.pptm" style="display:none" />
+          <div class="muted" id="upload_status" style="margin-top:8px"></div>
           <div class="row" style="margin-top:18px;">
             <button class="btn primary" onclick="uploadDeck()">Проверить</button>
           </div>
         </div>
 
-        <div id="left-slides" class="card hidden">
+        <div id="left-slides" class="card hidden" style="border-color: #ffffff;">
         <div class="space-between" style="margin-bottom:10px">
           <div style="font-weight:800; font-size:20px">Слайды</div>
           <button class="btn" onclick="resetStart()">↻ загрузить другую презентацию</button>
@@ -199,7 +236,13 @@
       <button class="btn primary" onclick="goNext()">Далее →</button>
     </div>
   </div>
-  <script>ensureSID();</script>
+  <script>
+    ensureSID();
+    document.addEventListener('DOMContentLoaded', ()=>{
+      const deck = document.getElementById('deck');
+      if (deck) deck.addEventListener('change', onDeckSelected);
+    });
+  </script>
 </body>
 </html>
 
