@@ -30,6 +30,7 @@ class TaskInfo:
     progress_pct: int = 0
     error_code: Optional[str] = None
     error_message: Optional[str] = None
+    session_id: Optional[str] = None
 
 
 _tasks_lock = threading.Lock()
@@ -81,10 +82,14 @@ def _pipeline(session_id: str, task_id: str) -> None:
     lg = logging.getLogger(__name__)
     try:
         lg.info("pipeline_start", extra={"session_id": session_id, "task_id": task_id})
-        _set(task_id, state="RUNNING", stage="parse", progress_pct=5)
+        _set(task_id, state="RUNNING", stage="parse", progress_pct=5, session_id=session_id)
         folder = UPLOADS_DIR / session_id
         out_dir = ARTIFACTS_DIR / session_id
         out_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            _write_json(out_dir / "status.json", asdict(_tasks.get(task_id) or TaskInfo()))
+        except Exception:
+            pass
 
         data = _load_json(folder / "data.json")
         meta = _load_json(folder / "meta.json")
@@ -107,6 +112,10 @@ def _pipeline(session_id: str, task_id: str) -> None:
         lg.info("pptx_render", extra={"images": len(image_paths)})
 
         _set(task_id, stage="asr", progress_pct=30)
+        try:
+            _write_json(out_dir / "status.json", asdict(_tasks.get(task_id) or TaskInfo()))
+        except Exception:
+            pass
         audio_path = _find_audio(folder)
         if audio_path is None:
             raise FileNotFoundError("Audio/Video not found")
@@ -115,6 +124,10 @@ def _pipeline(session_id: str, task_id: str) -> None:
         lg.info("asr_done", extra={"chars": len(transcript)})
 
         _set(task_id, stage="judge", progress_pct=60)
+        try:
+            _write_json(out_dir / "status.json", asdict(_tasks.get(task_id) or TaskInfo()))
+        except Exception:
+            pass
         per_slide_text = slice_transcript_by_datajson(transcript, data)
         # Compute durations per slide from data.json if provided
         durations_ms_by_index: Dict[int, int] = {}
@@ -172,6 +185,10 @@ def _pipeline(session_id: str, task_id: str) -> None:
 
         # Speech quality metrics
         _set(task_id, stage="speech_quality", progress_pct=92)
+        try:
+            _write_json(out_dir / "status.json", asdict(_tasks.get(task_id) or TaskInfo()))
+        except Exception:
+            pass
         speech_quality = compute_speech_quality(audio_path, transcript, data, per_slide_text)
         lg.info("speech_quality", extra={"available": bool(speech_quality.get("available"))})
 
@@ -196,6 +213,10 @@ def _pipeline(session_id: str, task_id: str) -> None:
         (out_dir / "questions.json").write_text(json.dumps(questions, ensure_ascii=False, indent=2), encoding="utf-8")
 
         _set(task_id, state="DONE", stage="assemble", progress_pct=100)
+        try:
+            _write_json(out_dir / "status.json", asdict(_tasks.get(task_id) or TaskInfo()))
+        except Exception:
+            pass
         lg.info("pipeline_done", extra={"task_id": task_id})
     except Exception as e:
         _set(task_id, state="FAILED", error_code="PIPELINE_ERROR", error_message=str(e))

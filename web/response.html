@@ -16,23 +16,34 @@
     .muted { color:#6b7280; }
     .card { border:1px solid #e5e7eb; border-radius:12px; padding:16px; background:#fff; }
     .grid { display:grid; grid-template-columns:1.1fr .9fr; gap:24px; }
-    .opt { border:1px solid #cbd5e1; border-radius:10px; padding:12px; background:#fff; cursor:pointer; }
+    .opt { border:1px solid #cbd5e1; border-radius:10px; padding:12px; background:#fff; cursor:pointer; transition: background-color .15s ease, border-color .15s ease; }
     .opt.selected { outline:2px solid var(--brand); background:#eef2ff; }
-    .opt.good { background:#d1fadf; border-color:#7cd992; }
-    .opt.bad { background:#fecaca; border-color:#f87171; }
-    .opt.mid { background:#fef08a; border-color:#facc15; }
+    .opt.verdict-good { background:#d1fadf; border-color:#7cd992; }
+    .opt.verdict-bad { background:#fecaca; border-color:#f87171; }
+    .opt.verdict-mid { background:#fef08a; border-color:#facc15; }
     .right-note { border:1px solid #e5e7eb; border-radius:10px; padding:14px; }
-    .footer { display:flex; justify-content:space-between; align-items:center; margin-top:14px; }
+    .footer { display:flex; justify-content:space-between; align-items:center; margin-top:28px; }
+    .footer .btn, .footer .btn.primary { font-size:16px; font-weight:600; }
     .placeholder { background:#e5e7eb; border-radius:10px; height:260px; }
+    /* Loading bar */
+    .loading { display:none; margin:10px 0 6px 0; }
+    .progress { position:relative; height:6px; background:#e5e7eb; border-radius:999px; overflow:hidden; }
+    .progress .bar { position:absolute; left:-40%; top:0; bottom:0; width:40%; background:var(--brand); border-radius:999px; animation: indeterminate 1.2s infinite ease-in-out; }
+    @keyframes indeterminate { 0% { left:-40%; width:40%; } 50% { left:25%; width:50%; } 100% { left:100%; width:40%; } }
   </style>
   <script>
     function getSID(){ const u=new URLSearchParams(location.search).get('sid'); if(u){localStorage.setItem('pp_sid',u);return u;} return localStorage.getItem('pp_sid'); }
 
-    // Data from API: {roles:[{actor, objections:[{prompt, answer}]}]}
+    // Data from API: {roles:[{actor, question, slide, quote, options:[{text, grade: 'good'|'mid'|'bad', explanation}]}]}
     let ROLES = [];
     let roleIdx = 0;
+    let ANSWERS = []; // 'good' | 'mid' | 'bad' per role
+
+    function showLoading(msg){ const l=document.getElementById('loading'); const t=document.getElementById('loading_text'); if(t && msg) t.textContent=msg; if(l) l.style.display='block'; }
+    function hideLoading(){ const l=document.getElementById('loading'); if(l) l.style.display='none'; }
 
     async function loadFromAPI(){
+      showLoading('Готовим вопросы к выступлению…');
       const sid = getSID();
       // If a background task is known, poll its status until DONE/FAILED (with timeout)
       let taskId = localStorage.getItem('pp_task');
@@ -61,21 +72,30 @@
       } catch(_) {
         ROLES = [];
       }
+      hideLoading();
     }
 
     function renderRole(){
       const r = ROLES[roleIdx];
-      const title = r ? r.actor : '—';
-      document.getElementById('q_title').textContent = title;
+      const actor = r ? r.actor : '—';
+      document.getElementById('q_title').textContent = actor;
+      const q = r ? (r.question || '—') : '—';
+      const meta = [];
+      if (r && r.slide != null) meta.push(`слайд ${r.slide}`);
+      if (r && r.quote) meta.push(`«${String(r.quote).slice(0,140)}»`);
+      const qEl = document.getElementById('q_question');
+      if (qEl) qEl.innerHTML = meta.length ? `${escapeHtml(q)}<div class="muted" style="margin-top:6px">${escapeHtml(meta.join(' · '))}</div>` : escapeHtml(q);
+
       const box = document.getElementById('opts');
       box.innerHTML = '';
-      if (r && Array.isArray(r.objections)) {
-        r.objections.forEach((obj, i)=>{
+      if (r && Array.isArray(r.options)) {
+        r.options.forEach((opt, i)=>{
           const div = document.createElement('div');
           div.className = 'opt';
-          div.textContent = obj.prompt;
+          div.textContent = opt.text;
           div.dataset.i = i;
-          div.addEventListener('click', ()=> selectObjection(i));
+          div.dataset.grade = String(opt.grade||'');
+          div.addEventListener('click', ()=> selectOption(i));
           box.appendChild(div);
         });
       }
@@ -85,13 +105,29 @@
       updateProgress();
     }
 
-    function selectObjection(i){
-      [...document.querySelectorAll('.opt')].forEach(el=> el.classList.remove('selected'));
+    function selectOption(i){
+      const opts = [...document.querySelectorAll('.opt')];
+      opts.forEach(el=> { el.classList.remove('selected','verdict-good','verdict-mid','verdict-bad'); });
       const el = document.querySelector(`.opt[data-i="${i}"]`);
       if (el) el.classList.add('selected');
       const r = ROLES[roleIdx];
-      const obj = r && r.objections ? r.objections[i] : null;
-      document.getElementById('note').textContent = obj ? obj.answer : '';
+      const opt = r && r.options ? r.options[i] : null;
+      if (!opt) { document.getElementById('note').textContent=''; return; }
+      const grade = String(opt.grade||'');
+      const verdict = grade==='good' ? 'Правильно' : (grade==='mid' ? 'Частично верно' : 'Неверно');
+      if (el){
+        if (grade==='good') el.classList.add('verdict-good');
+        else if (grade==='mid') el.classList.add('verdict-mid');
+        else el.classList.add('verdict-bad');
+      }
+      document.getElementById('note').innerHTML = `<div style=\"font-weight:600; margin-bottom:6px\">${verdict}</div><div>${escapeHtml(String(opt.explanation||''))}</div>`;
+      ANSWERS[roleIdx] = grade;
+      const nextBtn = document.getElementById('nextBtn');
+      if (roleIdx + 1 < ROLES.length) {
+        if (nextBtn) nextBtn.style.display = 'inline-block';
+      } else {
+        showSummary();
+      }
     }
 
     function nextRole(){
@@ -105,7 +141,34 @@
     function showSummary(){
       document.getElementById('quiz').style.display = 'none';
       document.getElementById('summary').style.display = 'grid';
-      // placeholders already in layout; could fill stats text later
+      renderSummary();
+    }
+
+    function renderSummary(){
+      const total = ROLES.length;
+      const good = ANSWERS.filter(x=>x==='good').length;
+      const mid = ANSWERS.filter(x=>x==='mid').length;
+      const bad = ANSWERS.filter(x=>x==='bad').length;
+      const box = document.getElementById('sum_stats');
+      if (box){
+        box.innerHTML = `
+          <div class=\"row\" style=\"gap:12px; align-items:center;\">
+            <div class=\"opt verdict-good\" style=\"min-width:120px; text-align:center; font-weight:600;\">Правильно: ${good}</div>
+            <div class=\"opt verdict-mid\" style=\"min-width:140px; text-align:center; font-weight:600;\">Частично: ${mid}</div>
+            <div class=\"opt verdict-bad\" style=\"min-width:130px; text-align:center; font-weight:600;\">Неверно: ${bad}</div>
+          </div>
+          <div style=\"height:10px\"></div>
+          <div style=\"font-weight:600; margin:6px 0;\">По ролям</div>
+          <div>
+            ${ROLES.map((r,i)=>{
+              const g = ANSWERS[i]||'—';
+              const tag = g==='good' ? 'verdict-good' : (g==='mid'?'verdict-mid':(g==='bad'?'verdict-bad':''));
+              const label = g==='good'?'Правильно':(g==='mid'?'Частично':'Неверно');
+              return `<div class=\"row\" style=\"gap:10px; align-items:center; margin:6px 0;\"><div class=\"muted\" style=\"min-width:140px\">${escapeHtml(String(r.actor||'—'))}</div><div class=\"opt ${tag}\" style=\"padding:6px 10px;\">${label}</div></div>`;
+            }).join('')}
+          </div>
+        `;
+      }
     }
 
     function updateProgress(){
@@ -115,6 +178,8 @@
 
     function goBack(){ const sid=getSID(); location.href='/ui/repetition.html' + (sid?('?sid='+encodeURIComponent(sid)):''); }
     function finish(){ location.href = '/ui/'; }
+
+    function escapeHtml(s){ return (String(s||'')).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
 
     document.addEventListener('DOMContentLoaded', async ()=>{ await loadFromAPI(); renderRole(); });
   </script>
@@ -127,12 +192,20 @@
       <div id="progress" class="progress-counter">5/5</div>
     </div>
 
+    <div id="loading" class="loading">
+      <div class="progress"><span class="bar"></span></div>
+      <div class="muted" id="loading_text">Готовим результаты…</div>
+    </div>
+
     <!-- Quiz state -->
-    <div id="quiz" class="grid">
+    <div id="quiz" class="grid" style="margin-top:18px;">
       <div class="card">
         <div class="row" style="gap:10px; align-items:flex-start;">
           <div style="font-size:26px">🤔</div>
-          <div id="q_title" style="font-weight:600">—</div>
+          <div>
+            <div id="q_title" style="font-weight:600">—</div>
+            <div id="q_question" style="margin-top:6px">—</div>
+          </div>
         </div>
         <div id="opts" style="margin-top:12px; display:flex; flex-direction:column; gap:12px;">
         </div>
@@ -146,14 +219,10 @@
     </div>
 
     <!-- Summary state (after all questions) -->
-    <div id="summary" class="grid" style="display:none; grid-template-columns:1fr 1fr; gap:24px;">
+    <div id="summary" class="grid" style="display:none; grid-template-columns:1fr; gap:24px; margin-top:18px;">
       <div class="card">
         <div style="text-align:center; font-weight:600; margin-bottom:8px">Статистика</div>
-        <div class="placeholder"></div>
-      </div>
-      <div class="card">
-        <div style="text-align:center; font-weight:600; margin-bottom:8px">Советы</div>
-        <div class="placeholder" style="height:300px"></div>
+        <div id="sum_stats"></div>
       </div>
     </div>
 

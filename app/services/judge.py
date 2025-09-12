@@ -304,7 +304,7 @@ def analyze_script_with_meta(script_text: str, meta: Dict[str, Any]) -> Dict[str
     """
     Analyze the provided script text taking into account user's intent meta
     (goal, audience, format, experience). Returns strictly structured JSON:
-    {"score_0_100": int, "recommendations": [str], "thesis": [str]}
+    {"score_0_100": int, "recommendations": [{"text": str, "important": 0|1}], "thesis": [str]}
     """
     goal = meta.get("goal") or meta.get("goal_other") or ""
     audience = meta.get("audience") or ""
@@ -334,9 +334,10 @@ def analyze_script_with_meta(script_text: str, meta: Dict[str, Any]) -> Dict[str
         "\n[SCRIPT]\n" + (script_text or "") +
         "\n[INSTRUCTIONS]\n"
         "Assess quality and alignment. Score from 0 to 100 (integer). "
-        "Give 5–10 concise recommendations in Russian (short actionable sentences). "
+        "Give 5–10 concise recommendations in Russian (short actionable sentences), "
+        "and mark each recommendation with importance: 1 = highly important, 0 = important. "
         "Generate 3–7 thesis bullet points in Russian (max 12 words each). "
-        "Return JSON: {\"score_0_100\": int, \"recommendations\":[str], \"thesis\":[str]}"
+        "Return JSON: {\"score_0_100\": int, \"recommendations\":[{\"text\": str, \"important\": 0|1}], \"thesis\":[str]}"
     )
 
     resp = client.chat.completions.create(
@@ -359,18 +360,42 @@ def analyze_script_with_meta(script_text: str, meta: Dict[str, Any]) -> Dict[str
         except Exception:
             score = 0
         score = max(0, min(100, score))
-        recs = [str(x) for x in (parsed.get("recommendations") or [])][:10]
+
+        raw_recs = parsed.get("recommendations") or []
+        recs_out: List[Dict[str, Any]] = []
+        for item in raw_recs[:10]:
+            try:
+                text_val = str(item.get("text", "")).strip()
+                imp_val = item.get("important", 0)
+                try:
+                    imp_int = int(imp_val)
+                except Exception:
+                    imp_int = 0
+                imp_int = 1 if imp_int == 1 else 0
+                if text_val:
+                    recs_out.append({"text": text_val, "important": imp_int})
+            except Exception:
+                continue
+
         thesis = [str(x) for x in (parsed.get("thesis") or [])][:10]
-        logging.getLogger(__name__).info("analyze_script", extra={"score": score, "recs": len(recs), "thesis": len(thesis)})
-        return {"score_0_100": score, "recommendations": recs, "thesis": thesis}
+        logging.getLogger(__name__).info("analyze_script", extra={"score": score, "recs": len(recs_out), "thesis": len(thesis)})
+        return {"score_0_100": score, "recommendations": recs_out, "thesis": thesis}
     except Exception:
         return {"score_0_100": 0, "recommendations": [], "thesis": []}
 
 
-def generate_objections_with_answers(transcript_text: str, meta: Dict[str, Any]) -> Dict[str, Any]:
-    """Generate role-based objections (3 per role) with model answers.
+def generate_objections_with_answers(
+    transcript_text: str,
+    meta: Dict[str, Any],
+    slides: Optional[List[Dict[str, Any]]] = None,
+    per_slide_text: Optional[Dict[int, str]] = None,
+    deck_metrics: Optional[Dict[str, Any]] = None,
+    per_slide_eval: Optional[List[Dict[str, Any]]] = None,
+    weak_slides: Optional[List[int]] = None,
+) -> Dict[str, Any]:
+    """Generate role-based questions using ONLY transcript and meta (no slides).
 
-    Returns JSON: {"roles":[{"actor": str, "objections":[{"prompt": str, "answer": str}]}]}
+    Returns JSON: {"roles": [{"actor": str, "question": str, "slide": int|null, "quote": str, "options": [{"text": str, "grade": "good|mid|bad", "explanation": str}]}]}
     """
     goal = meta.get("goal") or meta.get("goal_other") or ""
     audience = meta.get("audience") or ""
@@ -382,9 +407,10 @@ def generate_objections_with_answers(transcript_text: str, meta: Dict[str, Any])
 
     system = (
         "You are a Russian-speaking role-play coach for objection handling. "
-        "Given the pitch transcript and meta context (goal, direction, audience, format, experience, notes), "
-        "produce three concise but challenging objections for each of three roles appropriate to the context, "
-        "and provide an ideal short answer for each objection. Output strictly valid JSON only."
+        "Use the provided transcript to craft SPECIFIC, contextual questions. "
+        "For each role, generate ONE concise but challenging question grounded in what the speaker actually said. "
+        "Include a short quote/paraphrase from the transcript as evidence. If slides are not provided, set slide to null. "
+        "Output strictly valid JSON only."
     )
 
     meta_blob = {
@@ -397,12 +423,25 @@ def generate_objections_with_answers(transcript_text: str, meta: Dict[str, Any])
         "notes": notes,
     }
 
+    # Prepare transcript excerpt to keep prompt size reasonable
+    try:
+        words = re.findall(r"\S+", transcript_text or "")
+        transcript_short = " ".join(words[:1200])
+    except Exception:
+        transcript_short = str(transcript_text or "")[:12000]
+
+    payload = {
+        "meta": meta_blob,
+        "transcript": transcript_short,
+    }
+
     user = (
-        "[META]\n" + json.dumps(meta_blob, ensure_ascii=False) +
-        "\n[TRANSCRIPT]\n" + (transcript_text or "") +
-        "\n[ROLES]\nReturn three roles relevant to the context (e.g., Инвестор, Техдиректор, Клиент)." 
-        " For each role, return exactly three objections and an ideal answer."
-        "\n[FORMAT]\n{\"roles\":[{\"actor\":str, \"objections\":[{\"prompt\":str, \"answer\":str}]}]}"
+        "[CONTEXT]\n" + json.dumps(payload, ensure_ascii=False) +
+        "\n[TASK]\nReturn three roles relevant to the context (e.g., Инвестор, Техдиректор, Клиент). "
+        "For EACH role, generate ONE specific, CHALLENGING question grounded strictly in the transcript, and THREE answer options: "
+        "1 correct (grade=good), 1 partially correct (grade=mid), 1 incorrect (grade=bad). "
+        "Provide a short supporting quote/paraphrase from the transcript. Set slide to null if unknown. "
+        "\n[STRICT FORMAT]\n{\"roles\":[{\"actor\":str, \"question\":str, \"slide\": int|null, \"quote\": str, \"options\":[{\"text\":str, \"grade\":\"good|mid|bad\", \"explanation\":str}]}]}"
     )
 
     resp = client.chat.completions.create(
@@ -422,14 +461,23 @@ def generate_objections_with_answers(transcript_text: str, meta: Dict[str, Any])
         out_roles: List[Dict[str, Any]] = []
         for r in roles:
             actor = str(r.get("actor", ""))
-            objs = []
-            for o in (r.get("objections") or [])[:3]:
-                prompt = str(o.get("prompt", ""))
-                answer = str(o.get("answer", ""))
-                if prompt:
-                    objs.append({"prompt": prompt, "answer": answer})
-            if actor and objs:
-                out_roles.append({"actor": actor, "objections": objs})
+            question = str(r.get("question", ""))
+            slide_val = r.get("slide", None)
+            try:
+                slide_num = int(slide_val) if slide_val is not None else None
+            except Exception:
+                slide_num = None
+            quote = str(r.get("quote", "")).strip()
+            opts_raw = r.get("options") or []
+            options: List[Dict[str, Any]] = []
+            for o in opts_raw[:3]:
+                text = str(o.get("text", ""))
+                grade = str(o.get("grade", "")).lower()
+                explanation = str(o.get("explanation", ""))
+                if text and grade in {"good", "mid", "bad"}:
+                    options.append({"text": text, "grade": grade, "explanation": explanation})
+            if actor and question and options:
+                out_roles.append({"actor": actor, "question": question, "slide": slide_num, "quote": quote, "options": options})
         logging.getLogger(__name__).info("objections_generated", extra={"roles": len(out_roles)})
         return {"roles": out_roles[:3]}
     except Exception:

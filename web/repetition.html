@@ -12,7 +12,7 @@
     h1 { font-size:34px; margin:0 0 10px 0; }
     .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
     .grid { display:grid; grid-template-columns:1.2fr .8fr; gap:24px; }
-    .card { border:1px solid #e5e7eb; border-radius:12px; padding:16px; background:#fff; }
+    .card { border:1px solid #ffffff; border-radius:12px; padding:16px; background:#fff; }
     .stage { border:1px solid #e5e7eb; border-radius:12px; padding:12px; min-height:360px; display:flex; justify-content:center; align-items:center; background:#fff; }
     .stage img { max-width:100%; height:auto; border-radius:8px; border:1px solid #e5e7eb; }
     .muted { color:#6b7280; }
@@ -24,13 +24,15 @@
     .progress { height:10px; background:#e5e7eb; border-radius:999px; width:380px; position:relative; }
     .progress > span { position:absolute; left:0; top:0; bottom:0; background:#8ba7ff; border-radius:999px; width:0%; }
     .placeholder { background:#e5e7eb; border-radius:10px; height:240px; }
-    video.cam { width:100%; border-radius:12px; border:1px solid #e5e7eb; background:#000; max-height:240px; object-fit:cover; }
-    .metric { border:1px solid #e5e7eb; border-radius:10px; padding:10px; background:#f8fafc; }
+    .metric { border:1px solid #ffffff; border-radius:10px; padding:10px; background:#f8fafc; }
     /* Loading bar */
     .loading { display:none; margin:10px 0 6px 0; }
-    .loading .progress { height:6px; width:auto; }
+    .loading .progress { height:6px; width:100%; overflow:hidden; border-radius:999px; }
     .loading .bar { position:relative; display:block; height:6px; background:var(--brand); border-radius:999px; animation: indeterminate 1.2s infinite ease-in-out; left:-40%; width:40%; }
     @keyframes indeterminate { 0% { left:-40%; width:40%; } 50% { left:25%; width:50%; } 100% { left:100%; width:40%; } }
+    /* Recommendations styling */
+    ul.recs { margin:0; padding-left:18px; }
+    ul.recs li.rec { color:#0f172a; background:transparent; border:none; padding:8px 10px; border-radius:0; margin:6px 0; }
   </style>
   <script>
     async function api(path, opts={}) { const r = await fetch(path, opts); if(!r.ok) throw new Error(await r.text()); try { return await r.json(); } catch(_) { return {}; } }
@@ -54,7 +56,7 @@
       left.textContent = (min<10?"0":"")+min+":"+(sec<10?"0":"")+sec;
       total.textContent = (timerTotal<10?"0":"")+timerTotal+":00";
       const perc=Math.min(100, (elapsed/(timerTotal*60))*100); pct.style.width=perc+"%";
-      if(isRecording && elapsed >= timerTotal*60){ stopRecording(true); }
+      if(isRecording && elapsed >= timerTotal*60){ isRecording=false; stopRecording(true); }
     }
     function startTimer(){
       timerTotal=getTimingMinutes();
@@ -63,17 +65,16 @@
       document.getElementById('t_elapsed').textContent='00:00';
       document.getElementById('t_fill').style.width='0%';
       if(timerId) cancelAnimationFrame(timerId);
-      const step=()=>{ updateTimerUI(); timerId=requestAnimationFrame(step); };
+      const step=()=>{ updateTimerUI(); if(isRecording){ timerId=requestAnimationFrame(step); } };
       step();
     }
-    function stopTimer(){ if(timerId) cancelAnimationFrame(timerId); }
+    function stopTimer(){ if(timerId) cancelAnimationFrame(timerId); timerId=null; }
 
     // Camera and recording
     let mediaStream=null, mediaRec=null;
-    async function openCamera(){ try { mediaStream = await navigator.mediaDevices.getUserMedia({ video:true, audio:false }); const v=document.getElementById('cam'); v.srcObject=mediaStream; v.play(); } catch(e) { console.error(e); } }
     async function startRecording(){
       const sid=await ensureSID();
-      if(!mediaStream){ await openCamera(); }
+      // Camera removed from layout
       // Immediately update UI and start timer so user sees progress even if mic permission is delayed
       const startBtn=document.getElementById('startBtn'); const stopBtn=document.getElementById('stopBtn');
       startBtn.disabled=true; startBtn.classList.add('disabled'); startBtn.classList.remove('primary');
@@ -91,7 +92,21 @@
         console.error(e);
       }
     }
-    async function stopRecording(auto=false){ const sid=getSID(); if(!mediaRec){ isRecording=false; stopTimer(); return; } await new Promise(r=>{ mediaRec.onstop=r; mediaRec.stop(); }); await fetch(`/audio/${sid}/finalize`,{method:'POST'}); const startBtn=document.getElementById('startBtn'); const stopBtn=document.getElementById('stopBtn'); startBtn.disabled=false; startBtn.classList.remove('disabled'); startBtn.classList.add('primary'); stopBtn.disabled=true; stopBtn.classList.remove('primary'); stopTimer(); isRecording=false; showStats(); try { const resp = await fetch(`/process/${sid}`, { method:'POST' }); const data = await resp.json().catch(()=>({})); if (resp.ok && data && data.task_id){ localStorage.setItem('pp_task', data.task_id); } } catch(_) {} }
+    async function stopRecording(auto=false){ const sid=getSID(); if(!mediaRec){ isRecording=false; stopTimer(); if(auto){ try { const resp = await fetch(`/process/${sid}`, { method:'POST' }); const data = await resp.json().catch(()=>({})); if (resp.ok && data && data.task_id){ localStorage.setItem('pp_task', data.task_id); } } catch(_) {} goNext(); } return; } await new Promise(r=>{ mediaRec.onstop=r; mediaRec.stop(); }); await fetch(`/audio/${sid}/finalize`,{method:'POST'}); const startBtn=document.getElementById('startBtn'); const stopBtn=document.getElementById('stopBtn'); startBtn.disabled=false; startBtn.classList.remove('disabled'); startBtn.classList.add('primary'); stopBtn.disabled=true; stopBtn.classList.remove('primary'); stopTimer(); isRecording=false; if(auto){ try { const resp = await fetch(`/process/${sid}`, { method:'POST' }); const data = await resp.json().catch(()=>({})); if (resp.ok && data && data.task_id){ localStorage.setItem('pp_task', data.task_id); } } catch(_) {} goNext(); return; } showStats(); try { const resp = await fetch(`/process/${sid}`, { method:'POST' }); const data = await resp.json().catch(()=>({})); if (resp.ok && data && data.task_id){ localStorage.setItem('pp_task', data.task_id); } } catch(_) {} }
+
+    function resetRepetition(){
+      try { localStorage.removeItem('pp_task'); } catch(_){ }
+      const stats=document.getElementById('stats'); if(stats) stats.style.display='none';
+      const startBtn=document.getElementById('startBtn'); const stopBtn=document.getElementById('stopBtn');
+      if(startBtn){ startBtn.disabled=false; startBtn.classList.remove('disabled'); startBtn.classList.add('primary'); }
+      if(stopBtn){ stopBtn.disabled=true; stopBtn.classList.remove('primary'); }
+      isRecording=false; stopTimer();
+      const elapsed=document.getElementById('t_elapsed'); const fill=document.getElementById('t_fill');
+      if(elapsed) elapsed.textContent='00:00';
+      if(fill) fill.style.width='0%';
+      try { const rb=document.getElementById('repeatBtn'); if (rb) rb.style.display='none'; } catch(_) {}
+      try { window.scrollTo({top:0, behavior:'smooth'}); } catch(_) {}
+    }
 
     function showLoading(msg){ const l=document.getElementById('loading'); const t=document.getElementById('loading_text'); if(t && msg) t.textContent=msg; if(l) l.style.display='block'; }
     function hideLoading(){ const l=document.getElementById('loading'); if(l) l.style.display='none'; }
@@ -126,14 +141,35 @@
             `;
           }
         }
+        // Load deck recommendations from feedback.md
+        try {
+          const resp = await fetch(`/artifacts/${sid}/feedback.md`, { cache: 'no-store' });
+          if (resp.ok) {
+            const text = await resp.text();
+            const lines = text.split(/\r?\n/).map(s=>s.trim()).filter(s=>s.startsWith('-'));
+            const html = lines.map(s=>`<li class="rec">${escapeHtml(s.replace(/^[-\s]+/, ''))}</li>`).join('') || '<li class="muted">—</li>';
+            const list = document.getElementById('deck_recs');
+            if (list) list.innerHTML = html;
+          }
+        } catch(_) {}
       } catch(_){ }
+      try {
+        const rb=document.getElementById('repeatBtn');
+        if (rb) {
+          const list = document.getElementById('deck_recs');
+          const hasRec = !!(list && list.querySelector('li.rec'));
+          rb.style.display = hasRec ? 'inline-flex' : 'none';
+        }
+      } catch(_) {}
       hideLoading();
     }
+
+    function escapeHtml(s){ return (String(s||'')).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
 
     function goBack(){ const sid=getSID(); location.href='/ui/slides.html' + (sid?('?sid='+encodeURIComponent(sid)):''); }
     function goNext(){ const sid=getSID(); location.href='/ui/response.html' + (sid?('?sid='+encodeURIComponent(sid)):''); }
 
-    document.addEventListener('DOMContentLoaded', async ()=>{ await ensureSID(); await loadSlides(); await openCamera(); document.getElementById('t_total').textContent=(getTimingMinutes()<10?"0":"")+getTimingMinutes()+":00"; });
+    document.addEventListener('DOMContentLoaded', async ()=>{ await ensureSID(); await loadSlides(); document.getElementById('t_total').textContent=(getTimingMinutes()<10?"0":"")+getTimingMinutes()+":00"; });
   </script>
 </head>
 <body>
@@ -168,10 +204,10 @@
         </div>
       </div>
       <div class="card">
-        <video id="cam" class="cam" autoplay muted playsinline></video>
         <div class="row" style="margin-top:12px; justify-content:flex-start; gap:12px;">
           <button id="startBtn" class="btn primary" onclick="startRecording()">Начать выступление</button>
           <button id="stopBtn" class="btn" disabled onclick="stopRecording()">Закончить выступление</button>
+          <button id="repeatBtn" class="btn" style="display:none" onclick="resetRepetition()">↻ Повторить с рекомендациями</button>
         </div>
       </div>
     </div>
@@ -184,7 +220,7 @@
       </div>
       <div class="card">
         <div style="text-align:center; font-weight:600; margin-bottom:8px">Рекомендации</div>
-        <div class="placeholder" style="height:300px"></div>
+        <ul id="deck_recs" class="recs"></ul>
       </div>
     </div>
 

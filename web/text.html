@@ -22,13 +22,13 @@
     .footer { display:flex; justify-content:space-between; align-items:center; margin-top:12px; padding-top:10px; }
     .footer .btn, .footer .btn.primary { font-size:16px; font-weight:600; }
     /* Loading bar */
-    .loading { display:none; margin-bottom:10px; }
+    .loading { display:none; margin:10px 0 6px 0; }
     .progress { position:relative; height:6px; background:#e5e7eb; border-radius:999px; overflow:hidden; }
     .progress .bar { position:absolute; left:-40%; top:0; bottom:0; width:40%; background:var(--brand); border-radius:999px; animation: indeterminate 1.2s infinite ease-in-out; }
     @keyframes indeterminate { 0% { left:-40%; width:40%; } 50% { left:25%; width:50%; } 100% { left:100%; width:40%; } }
     .hidden { display:none; }
     /* Align right analysis card with textarea top */
-    #right-pane { margin-top:32px; }
+    #right-pane { margin-top:32px; border-color:#ffffff; min-height:420px; }
     .progress-counter { font-size:16px; font-weight:600; color:var(--muted); }
     .score { width:92px; height:92px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:18px; color:#1a5f1a; position:relative; }
     .score svg { width:92px; height:92px; transform:rotate(-90deg); }
@@ -36,8 +36,27 @@
   </style>
   <style>
     /* Cosmetic color tweaks for recommendations and thesis */
-    #recs li.rec { color:#0f5132; background:#d1e7dd; border:1px solid #badbcc; padding:8px 10px; border-radius:8px; margin:6px 0; }
-    #thesis li.thesis { color:#1e3a8a; background:#dbeafe; border:1px solid #bfdbfe; padding:6px 10px; border-radius:8px; margin:6px 0; }
+    #recs li.rec { color:#1a5f1a; background:transparent; border:none; padding:10px 12px; border-radius:0; margin:12px 0; font-size:15px; }
+    #recs li.rec.imp { color:#b91c1c; background:transparent; border:none; }
+    #thesis li.thesis { color:#0f172a; background:transparent; border:none; padding:8px 0; border-radius:0; margin:10px 0; font-size:15px; }
+    /* Hover tip for recommendation importance */
+    #recs li.rec { position:relative; }
+    #recs li.rec::after {
+      content: attr(data-tip);
+      position:absolute;
+      right:8px;
+      top:-18px;
+      background:rgba(0,0,0,0.78);
+      color:#fff;
+      padding:2px 6px;
+      border-radius:6px;
+      font-size:12px;
+      line-height:1.2;
+      display:none;
+      white-space:nowrap;
+      pointer-events:none;
+    }
+    #recs li.rec:hover::after { display:inline-block; }
   </style>
   <script>
     async function api(path, opts={}) {
@@ -61,13 +80,24 @@
 
     async function uploadText() {
       const sid = await ensureSID();
-      const txt = (document.getElementById('text').value || '').slice(0, 1500);
+      const txt = (document.getElementById('text').value || '');
+      // Validate length before proceeding
+      if ((txt || '').length > 1500) {
+        try { document.getElementById('text_warn').textContent = 'Текст превышает лимит 1500 символов. Сократите текст.'; } catch(_) {}
+        try { const btn = document.getElementById('checkBtn'); if (btn) btn.disabled = true; } catch(_) {}
+        return;
+      }
       // show loading bar
-      try { document.getElementById('loading').style.display = 'block'; } catch(_) {}
+      try {
+        document.getElementById('loading').style.display = 'block';
+        const lt = document.getElementById('loading_text');
+        if (lt) lt.textContent = 'Загружаем текст…';
+      } catch(_) {}
       const blob = new Blob([txt], {type:'text/plain; charset=utf-8'});
       const fd = new FormData(); fd.append('file', blob, 'script.txt');
       await api(`/uploads/${sid}`, {method:'POST', body: fd});
       document.getElementById('right-pane').classList.remove('hidden');
+      try { const lt = document.getElementById('loading_text'); if (lt) lt.textContent = 'Анализируем текст…'; } catch(_) {}
       await analyze();
       try { document.getElementById('loading').style.display = 'none'; } catch(_) {}
     }
@@ -108,7 +138,21 @@
         const recs = Array.isArray(res.recommendations) ? res.recommendations : [];
         const thesis = Array.isArray(res.thesis) ? res.thesis : [];
         const rbox = document.getElementById('recs');
-        if (rbox) { rbox.innerHTML = recs.map(x=>`<li class="rec">${escapeHtml(String(x))}</li>`).join('') || '<li class="muted">—</li>'; }
+        if (rbox) {
+          const sorted = recs.slice().sort((a, b) => {
+            const ai = a && typeof a === 'object' ? (Number(a.important) === 1 ? 1 : 0) : 0;
+            const bi = b && typeof b === 'object' ? (Number(b.important) === 1 ? 1 : 0) : 0;
+            return bi - ai; // important first
+          });
+          rbox.innerHTML = sorted.map(x => {
+            const isObj = x && typeof x === 'object';
+            const txt = isObj ? x.text : x;
+            const imp = isObj ? Number(x.important) === 1 : false;
+            const cls = imp ? 'rec imp' : 'rec';
+            const tip = imp ? 'важное' : 'менее важное';
+            return `<li class="${cls}" data-tip="${tip}">${escapeHtml(String(txt || ''))}</li>`;
+          }).join('') || '<li class="muted">—</li>';
+        }
         const tbox = document.getElementById('thesis');
         if (tbox) { tbox.innerHTML = thesis.map(x=>`<li class="thesis">${escapeHtml(String(x))}</li>`).join('') || '<li class="muted">—</li>'; }
       } catch (e) {
@@ -128,16 +172,18 @@
       <h1>Анализ текста</h1>
       <div class="progress-counter">2/5</div>
     </div>
+    <div id="loading" class="loading">
+      <div class="progress"><span class="bar"></span></div>
+      <div class="muted" id="loading_text">Анализируем текст…</div>
+    </div>
     <div class="grid">
       <div>
-        <div id="loading" class="loading">
-          <div class="progress"><span class="bar"></span></div>
-        </div>
-        <div style="margin-bottom:10px; color:#0f172a; font-size:16px; font-weight:600">Введите текст для выступления ниже</div>
+        <div style="margin-bottom:25px; color:#0f172a; font-size:16px; font-weight:600">Введите текст для выступления ниже</div>
         <textarea id="text" placeholder="Введите или вставьте текст (до 1500 символов)"></textarea>
         <div class="muted">Ограничение: 1500 символов</div>
+        <div id="text_warn" class="muted" style="color:#b91c1c; font-weight:600"></div>
         <div style="height:8px"></div>
-        <button class="btn primary" style="padding:14px 22px; border-radius:12px; font-size:17px; font-weight:600" onclick="uploadText()">Проверить</button>
+        <button id="checkBtn" class="btn primary" style="padding:14px 22px; border-radius:12px; font-size:17px; font-weight:600" onclick="uploadText()">Проверить</button>
       </div>
       <div id="right-pane" class="card hidden">
         <div class="row" style="gap:14px; align-items:center;">
@@ -164,7 +210,29 @@
     </div>
   </div>
 
-  <script>ensureSID();</script>
+  <script>
+    function validateText(){
+      try {
+        const ta = document.getElementById('text');
+        const warn = document.getElementById('text_warn');
+        const btn = document.getElementById('checkBtn');
+        const len = (ta?.value || '').length;
+        if (len > 1500) {
+          if (warn) warn.textContent = 'Текст превышает лимит 1500 символов. Сократите текст.';
+          if (btn) btn.disabled = true;
+        } else {
+          if (warn) warn.textContent = '';
+          if (btn) btn.disabled = false;
+        }
+      } catch(_) {}
+    }
+    document.addEventListener('DOMContentLoaded', () => {
+      ensureSID();
+      const ta = document.getElementById('text');
+      if (ta) ta.addEventListener('input', validateText);
+      validateText();
+    });
+  </script>
 </body>
 </html>
 
