@@ -393,13 +393,9 @@ def generate_objections_with_answers(
     per_slide_eval: Optional[List[Dict[str, Any]]] = None,
     weak_slides: Optional[List[int]] = None,
 ) -> Dict[str, Any]:
-    """Generate role-based objections tied to slides and spoken content.
+    """Generate role-based questions using ONLY transcript and meta (no slides).
 
-    Returns JSON: {
-      "roles": [
-        {"actor": str, "objections": [{"slide": int|null, "quote": str, "prompt": str, "answer": str}]}
-      ]
-    }
+    Returns JSON: {"roles": [{"actor": str, "question": str, "slide": int|null, "quote": str, "options": [{"text": str, "grade": "good|mid|bad", "explanation": str}]}]}
     """
     goal = meta.get("goal") or meta.get("goal_other") or ""
     audience = meta.get("audience") or ""
@@ -411,9 +407,9 @@ def generate_objections_with_answers(
 
     system = (
         "You are a Russian-speaking role-play coach for objection handling. "
-        "Use provided slide info and spoken transcript windows to craft SPECIFIC objections. "
-        "For each role, generate exactly 3 concise but challenging objections grounded in the user's speech and slides. "
-        "Each objection SHOULD reference a slide number when applicable and include a short quote/paraphrase from the transcript as evidence. "
+        "Use the provided transcript to craft SPECIFIC, contextual questions. "
+        "For each role, generate ONE concise but challenging question grounded in what the speaker actually said. "
+        "Include a short quote/paraphrase from the transcript as evidence. If slides are not provided, set slide to null. "
         "Output strictly valid JSON only."
     )
 
@@ -427,46 +423,24 @@ def generate_objections_with_answers(
         "notes": notes,
     }
 
-    # Compact slides for prompt
-    compact_slides: List[Dict[str, Any]] = []
-    for s in (slides or [])[:20]:
-        try:
-            compact_slides.append({
-                "index": s.get("index"),
-                "title": str(s.get("title", ""))[:140],
-                "bullets": (" ".join([str(b) for b in (s.get("bullets") or [])])[:260]) if s.get("bullets") else None,
-            })
-        except Exception:
-            continue
-    # Per-slide spoken windows (truncate to keep prompt short)
-    spoken: List[Dict[str, Any]] = []
-    if per_slide_text:
-        for idx in sorted(per_slide_text.keys()):
-            try:
-                t = str(per_slide_text[idx] or "").strip()
-                if t:
-                    # limit to ~100 words
-                    words = t.split()
-                    t_short = " ".join(words[:100])
-                    spoken.append({"index": idx, "spoken": t_short})
-            except Exception:
-                continue
+    # Prepare transcript excerpt to keep prompt size reasonable
+    try:
+        words = re.findall(r"\S+", transcript_text or "")
+        transcript_short = " ".join(words[:1200])
+    except Exception:
+        transcript_short = str(transcript_text or "")[:12000]
 
     payload = {
         "meta": meta_blob,
-        "slides": compact_slides,
-        "spoken_by_slide": spoken,
-        "deck_metrics": deck_metrics or {},
-        "per_slide_eval": per_slide_eval or [],
-        "weak_slides": sorted(list(set(weak_slides or []))),
+        "transcript": transcript_short,
     }
 
     user = (
         "[CONTEXT]\n" + json.dumps(payload, ensure_ascii=False) +
         "\n[TASK]\nReturn three roles relevant to the context (e.g., Инвестор, Техдиректор, Клиент). "
-        "For EACH role, generate ONE specific, CHALLENGING question that targets the weaknesses (if any) grounded in slides and spoken content, and THREE answer options: "
+        "For EACH role, generate ONE specific, CHALLENGING question grounded strictly in the transcript, and THREE answer options: "
         "1 correct (grade=good), 1 partially correct (grade=mid), 1 incorrect (grade=bad). "
-        "Reference a slide number when applicable and provide a short supporting quote/paraphrase from the transcript. "
+        "Provide a short supporting quote/paraphrase from the transcript. Set slide to null if unknown. "
         "\n[STRICT FORMAT]\n{\"roles\":[{\"actor\":str, \"question\":str, \"slide\": int|null, \"quote\": str, \"options\":[{\"text\":str, \"grade\":\"good|mid|bad\", \"explanation\":str}]}]}"
     )
 

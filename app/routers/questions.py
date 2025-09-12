@@ -43,49 +43,8 @@ def get_questions(session_id: str) -> Dict[str, Any]:
         raise HTTPException(status_code=400, detail="Transcript not found; record audio first.")
     meta = _load_json(folder / "meta.json")
 
-    # Load extra context for more specific objections
-    slides_payload = _load_json((ARTIFACTS_DIR / session_id) / "slides.json")
-    deck_metrics = slides_payload.get("metrics") if isinstance(slides_payload, dict) else {}
-    slides = slides_payload.get("slides") if isinstance(slides_payload, dict) else []
-
-    data_json = _load_json(folder / "data.json")
-    # Try to slice transcript per slide using data.json timings to provide windows
-    try:
-        from app.services.judge import slice_transcript_by_datajson
-        per_slide_text = slice_transcript_by_datajson(transcript, data_json)
-    except Exception:
-        per_slide_text = {}
-
-    # Load per-slide evaluation from report.json to identify weak spots
-    report = _load_json((ARTIFACTS_DIR / session_id) / "report.json")
-    per_slide_eval = []
-    weak_slides = []
-    try:
-        ps = (report.get("slides") or {}).get("per_slide") or []
-        for r in ps:
-            idx = r.get("index")
-            sim = r.get("similarity_0_1", 0.0)
-            jdg = r.get("judgement", "")
-            try:
-                idx_i = int(idx)
-            except Exception:
-                continue
-            per_slide_eval.append({"index": idx_i, "similarity_0_1": float(sim or 0.0), "judgement": jdg})
-            if (sim or 0.0) < 0.6:
-                weak_slides.append(idx_i)
-    except Exception:
-        per_slide_eval = []
-        weak_slides = []
-
-    res = generate_objections_with_answers(
-        transcript,
-        meta,
-        slides=slides,
-        per_slide_text=per_slide_text,
-        deck_metrics=deck_metrics,
-        per_slide_eval=per_slide_eval,
-        weak_slides=weak_slides,
-    )
+    # Simplified generation: use only transcript and meta to speed up
+    res = generate_objections_with_answers(transcript, meta)
 
     # persist for UI reuse
     out = ARTIFACTS_DIR / session_id

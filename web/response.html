@@ -23,6 +23,7 @@
     .opt.verdict-mid { background:#fef08a; border-color:#facc15; }
     .right-note { border:1px solid #e5e7eb; border-radius:10px; padding:14px; }
     .footer { display:flex; justify-content:space-between; align-items:center; margin-top:28px; }
+    .footer .btn, .footer .btn.primary { font-size:16px; font-weight:600; }
     .placeholder { background:#e5e7eb; border-radius:10px; height:260px; }
     /* Loading bar */
     .loading { display:none; margin:10px 0 6px 0; }
@@ -218,14 +219,10 @@
     </div>
 
     <!-- Summary state (after all questions) -->
-    <div id="summary" class="grid" style="display:none; grid-template-columns:1fr 1fr; gap:24px; margin-top:18px;">
+    <div id="summary" class="grid" style="display:none; grid-template-columns:1fr; gap:24px; margin-top:18px;">
       <div class="card">
         <div style="text-align:center; font-weight:600; margin-bottom:8px">Статистика</div>
         <div id="sum_stats"></div>
-      </div>
-      <div class="card">
-        <div style="text-align:center; font-weight:600; margin-bottom:8px">Советы</div>
-        <div class="placeholder" style="height:300px"></div>
       </div>
     </div>
 
