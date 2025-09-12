@@ -10,6 +10,8 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.staticfiles import StaticFiles
+from fastapi import Request
+import uuid
 
 from app.core.paths import ARTIFACTS_DIR, WEB_DIR
 from app.core.logging import setup_logging, request_id_var
@@ -25,7 +27,8 @@ from app.routers.questions import router as questions_router
 
 setup_logging()
 app = FastAPI(title="PerfectPitch MVP API")
-import json
+
+
 def _allowed_origins() -> list[str]:
     raw = os.getenv("ALLOWED_ORIGINS", "*")
     if raw.strip() == "*":
@@ -43,12 +46,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.mount("/artifacts", StaticFiles(directory=str(ARTIFACTS_DIR), html=False), name="artifacts")
-app.mount("/ui", StaticFiles(directory=str(WEB_DIR), html=True), name="ui")
-from fastapi import Request
-import uuid
-
-
+app.mount(
+    "/artifacts",
+    StaticFiles(directory=str(ARTIFACTS_DIR), html=False),
+    name="artifacts",
+)
+app.mount(
+    "/ui",
+    StaticFiles(directory=str(WEB_DIR), html=True),
+    name="ui",
+)
 
 @app.get("/health")
 def health():
@@ -60,12 +67,14 @@ def health():
         except Exception:
             return False
 
-    # poppler is used by pdf2image; no reliable import check, but 'pdftoppm' binary indicates presence
+    # poppler is used by pdf2image; no reliable import check,
+    # but 'pdftoppm' binary indicates presence
     deps = {
         "ffmpeg": has_bin("ffmpeg"),
         "soffice": has_bin("soffice") or has_bin("libreoffice"),
         "poppler_pdftoppm": has_bin("pdftoppm"),
         "openai_key": bool(os.getenv("OPENAI_API_KEY")),
+        "openrouter_key": bool(os.getenv("OPENROUTER_API_KEY")),
     }
     return {"ok": True, "deps": deps}
 
@@ -94,6 +103,10 @@ async def add_request_id(request: Request, call_next):
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("app.main:app", host="0.0.0.0", port=int(os.getenv("PORT", "8000")), reload=True)
-
+    uvicorn.run(
+        "app.main:app",
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", "8000")),
+        reload=True,
+    )
 

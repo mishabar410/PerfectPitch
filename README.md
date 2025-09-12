@@ -4,7 +4,7 @@ Minimal pipeline to analyze a pitch presentation using PPTX and audio transcript
 
 ## Stack
 - FastAPI, Uvicorn
-- OpenAI API: whisper-1 (ASR), gpt-4o-mini (judging, feedback)
+- LLMs via OpenRouter (gpt-4o-mini for judging/feedback), ASR via OpenAI Whisper
 - python-pptx (parsing), LibreOffice+poppler+pdf2image (slide PNGs)
 - librosa+ffmpeg (speech quality)
 
@@ -18,9 +18,13 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-2) Set the OpenAI key:
+2) Set API keys (OpenRouter for chat; OpenAI for Whisper):
 ```bash
+export OPENROUTER_API_KEY=or-...
 export OPENAI_API_KEY=sk-...
+# optional for OpenRouter analytics
+export OPENROUTER_HTTP_REFERER=https://your.app/
+export OPENROUTER_X_TITLE="PerfectPitch"
 ```
 
 ## Run
