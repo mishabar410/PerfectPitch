@@ -42,7 +42,7 @@
     function hideLoading(){ const l=document.getElementById('loading'); if(l) l.style.display='none'; }
 
     async function loadFromAPI(){
-      showLoading('Готовим результаты…');
+      showLoading('Готовим вопросы к выступлению…');
       const sid = getSID();
       // If a background task is known, poll its status until DONE/FAILED (with timeout)
       let taskId = localStorage.getItem('pp_task');

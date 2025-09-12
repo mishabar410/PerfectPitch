@@ -36,7 +36,7 @@
   </style>
   <style>
     /* Cosmetic color tweaks for recommendations and thesis */
-    #recs li.rec { color:#0f172a; background:transparent; border:none; padding:10px 12px; border-radius:0; margin:12px 0; font-size:15px; }
+    #recs li.rec { color:#1a5f1a; background:transparent; border:none; padding:10px 12px; border-radius:0; margin:12px 0; font-size:15px; }
     #recs li.rec.imp { color:#b91c1c; background:transparent; border:none; }
     #thesis li.thesis { color:#0f172a; background:transparent; border:none; padding:8px 0; border-radius:0; margin:10px 0; font-size:15px; }
     /* Hover tip for recommendation importance */
@@ -149,7 +149,7 @@
             const txt = isObj ? x.text : x;
             const imp = isObj ? Number(x.important) === 1 : false;
             const cls = imp ? 'rec imp' : 'rec';
-            const tip = imp ? 'важное' : 'неважное';
+            const tip = imp ? 'важное' : 'менее важное';
             return `<li class="${cls}" data-tip="${tip}">${escapeHtml(String(txt || ''))}</li>`;
           }).join('') || '<li class="muted">—</li>';
         }
