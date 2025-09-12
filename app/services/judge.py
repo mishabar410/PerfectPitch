@@ -151,7 +151,7 @@ def judge_slides_batched(
         user_content.append({"type": "text", "text": "Return {\"per_slide\":[{index, similarity_0_1, judgement, missing_points, hallucinated_points, evidence}]}, preserving input order by slide index."})
 
         resp = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="openai/gpt-4o-mini",
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": [{"type": "text", "text": system}]},
@@ -205,7 +205,7 @@ def generate_feedback_and_questions(
     )
 
     resp = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="openai/gpt-4o-mini",
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": system},
@@ -260,7 +260,7 @@ def judge_script_vs_speech(script_text: str, transcript_text: str) -> Dict[str, 
         "\n[INSTRUCTIONS]\nReturn JSON: {\"similarity_0_1\": float, \"notes\": str, \"missing_points\": [str], \"added_points\": [str]}"
     )
     resp = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="openai/gpt-4o-mini",
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": system},
@@ -285,7 +285,7 @@ def review_script_quality(script_text: str) -> Dict[str, Any]:
         "\n[INSTRUCTIONS]\nReturn JSON: {\"issues\":[str], \"suggestions\":[str], \"overall\": str}"
     )
     resp = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="openai/gpt-4o-mini",
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": system},
@@ -341,7 +341,7 @@ def analyze_script_with_meta(script_text: str, meta: Dict[str, Any]) -> Dict[str
     )
 
     resp = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="openai/gpt-4o-mini",
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": system},
